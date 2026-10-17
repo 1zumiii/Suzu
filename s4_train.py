@@ -17,6 +17,8 @@ from student_model import BOS, PAD, Student, build_vocab, cand_scores, encode, p
 
 
 def teacher_name():
+    if os.environ.get("DISTILL_TEACHER"):
+        return os.environ["DISTILL_TEACHER"]
     ms = C.models()
     return next(k for k, v in ms.items() if v.get("role") == "teacher") if any(
         v.get("role") == "teacher" for v in ms.values()) else next(iter(ms))
@@ -114,7 +116,9 @@ def run():
                 for n, it in enumerate(part):
                     tgt[n, :len(it["ts"])] = torch.tensor(it["ts"], device=dev)
                 pt = F.softmax(tgt / cfg["kd_temp"], -1)
-                kd = F.kl_div(F.log_softmax(sc / cfg["kd_temp"], -1), pt, reduction="batchmean")
+                kdv = F.kl_div(F.log_softmax(sc / cfg["kd_temp"], -1), pt, reduction="none").sum(-1)
+                wv = torch.tensor([1.0 + cfg.get("kd_hard_weight", 0.0) * it["s"] for it in part], device=dev)   # 难例加权
+                kd = (kdv * wv).sum() / wv.sum()
             loss = lm + cfg["kd_weight"] * kd
         opt.zero_grad(set_to_none=True)
         loss.backward()

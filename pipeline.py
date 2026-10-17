@@ -21,7 +21,24 @@ MAX_UNIT_FAILS = 4
 def units():
     import s0_fetch, s1_build, s2_score, s3_report
     ms = C.models()
-    teacher = next((k for k, v in ms.items() if v.get("role") == "teacher"), next(iter(ms)))
+    teacher = os.environ.get("DISTILL_TEACHER") or next((k for k, v in ms.items() if v.get("role") == "teacher"), next(iter(ms)))
+    if C.ROUND2:
+        # 第二轮：评测题与基线打分沿用第一轮；新增四字评测，教师换成 4B 标注更多训练题
+        u = [("fetch", s0_fetch.run, False), ("build", s1_build.run, False),
+             ("score_ngram_four", partial(s2_score.run_eval, "ngram", "items_four", "__four"), False)]
+        u += [(f"score_{k}_four", partial(s2_score.run_eval, k, "items_four", "__four"), False)
+              for k in ms if k in ("q35_0p8b", "q35_4b")]
+        u.append(("teacher_train", partial(s2_score.run_teacher_train, teacher), True))
+
+        def train2():
+            import s4_train
+            s4_train.run()
+
+        u += [("train", train2, True),
+              ("score_student", partial(s2_score.run_eval, "student"), True),
+              ("score_student_four", partial(s2_score.run_eval, "student", "items_four", "__four"), True),
+              ("report_final", partial(s3_report.run, True), True)]
+        return u
     u = [("fetch", s0_fetch.run, False), ("build", s1_build.run, False),
          ("score_ngram", partial(s2_score.run_eval, "ngram"), False)]
     u += [(f"score_{k}", partial(s2_score.run_eval, k), False) for k in ms]
