@@ -1,6 +1,8 @@
 """学生模型：字符级小型 Transformer 语言模型，给「上文 + 候选」打对数概率之和，与教师打分同口径。"""
 from collections import Counter
 
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -49,10 +51,10 @@ def encode(vocab_index, text):
 
 def pad_batch(seqs, device):
     L = max(len(s) for s in seqs)
-    t = torch.zeros(len(seqs), L, dtype=torch.long)
+    t = np.zeros((len(seqs), L), dtype=np.int64)
     for i, s in enumerate(seqs):
-        t[i, :len(s)] = torch.tensor(s)
-    return t.to(device)
+        t[i, :len(s)] = s                      # 在 numpy 里填充，只传一次显卡；s 可以是列表或 numpy 数组
+    return torch.from_numpy(t).to(device)
 
 
 def cand_scores(model, vocab_index, items, device):
@@ -73,10 +75,10 @@ def cand_scores(model, vocab_index, items, device):
     hi = torch.tensor([a + b for a, b in cmask_spans], device=device)[:, None]
     tot = (lp * ((j >= lo) & (j < hi))).sum(1)                                           # 目标下标 ctx..ctx+len-1 即候选各字
     K = max(len(it["c"]) for it in items)
+    ns = torch.tensor([n for n, _ in owner], device=device)
+    ks = torch.tensor([k for _, k in owner], device=device)
     out = torch.full((len(items), K), -1e4, device=device)
-    for s, (n, k) in enumerate(owner):
-        out[n, k] = tot[s]
-    return out
+    return out.index_put((ns, ks), tot)        # 一次性写入 [N,K]，可反传
 
 
 def score_items(model, vocab, items, device):

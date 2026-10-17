@@ -15,6 +15,11 @@ if "--corpus" in sys.argv:
 import common as C
 from common import log
 
+import faulthandler
+
+_fault_fh = open(C.LOGS / "fault.log", "a")      # 进程被系统直接杀掉或崩溃时留下线程栈，用于诊断静默退出
+faulthandler.enable(_fault_fh, all_threads=True)
+
 MAX_UNIT_FAILS = 4
 
 

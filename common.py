@@ -215,13 +215,20 @@ class Progress:
     def __init__(self, name, total, done=0):
         self.name, self.total, self.done0, self.done = name, total, done, done
         self.t0 = self.last = time.time()
+        self.window = 300.0                    # 速度按最近 5 分钟的滑动窗口计算，续跑后窗口重置
+        self.hist = [(self.t0, done)]
 
     def tick(self, n=1, force=False):
         self.done += n
         now = time.time()
+        if now - self.hist[-1][0] >= 1.0:
+            self.hist.append((now, self.done))
+            while len(self.hist) > 2 and now - self.hist[1][0] >= self.window:
+                self.hist.pop(0)               # 保留窗口起点之前的最后一个样本作为锚点
         if force or now - self.last >= 60:
             self.last = now
-            rate = (self.done - self.done0) / max(now - self.t0, 1e-6)
+            t_a, d_a = self.hist[0]
+            rate = (self.done - d_a) / max(now - t_a, 1e-6)
             eta = (self.total - self.done) / rate if rate > 0 else 0
             msg = f"[{self.name}] {self.done}/{self.total}，{rate:.1f}/s，预计剩余 {eta/60:.0f} 分钟"
             log(msg)
