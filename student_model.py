@@ -37,28 +37,43 @@ class Student(nn.Module):
         with torch.no_grad():
             self.emb.weight[PAD].zero_()
 
-    def forward(self, ids):
+    def hidden(self, ids, pos=None, mask=None):
+        """输出层之前的隐状态。mask 为 [B,T,T] 的布尔张量（True 表示不允许注意），pos 为 [B,T] 的位置编号；
+        都不给时是普通的因果注意力。"""
         T = ids.shape[1]
-        x = self.emb(ids) + self.pos(torch.arange(T, device=ids.device))[None]
-        mask = nn.Transformer.generate_square_subsequent_mask(T, device=ids.device)
-        x = self.ln(self.blocks(x, mask=mask, is_causal=True))
-        return x @ self.emb.weight.T          # 输入输出共用词向量
+        if pos is None:
+            pos = torch.arange(T, device=ids.device)[None]
+        x = self.emb(ids) + self.pos(pos)
+        if mask is None:
+            m = nn.Transformer.generate_square_subsequent_mask(T, device=ids.device)
+            x = self.blocks(x, mask=m, is_causal=True)
+        else:
+            heads = self.blocks.layers[0].self_attn.num_heads
+            x = self.blocks(x, mask=mask.repeat_interleave(heads, 0), is_causal=False)
+        return self.ln(x)
+
+    def forward(self, ids):
+        return self.hidden(ids) @ self.emb.weight.T          # 输入输出共用词向量
 
 
 def encode(vocab_index, text):
     return [vocab_index.get(c, UNK) for c in text]
 
 
+PAD_MULTIPLE = 1   # 第 7 项：把批内长度补齐到该数的倍数（默认 1，不补）
+
+
 def pad_batch(seqs, device):
     L = max(len(s) for s in seqs)
+    L = -(-L // PAD_MULTIPLE) * PAD_MULTIPLE
     t = np.zeros((len(seqs), L), dtype=np.int64)
     for i, s in enumerate(seqs):
         t[i, :len(s)] = s                      # 在 numpy 里填充，只传一次显卡；s 可以是列表或 numpy 数组
     return torch.from_numpy(t).to(device)
 
 
-def cand_scores(model, vocab_index, items, device):
-    """返回 [N, K] 的候选分数张量（不足 K 的位置填 -1e4），可反传。"""
+def cand_scores_ref(model, vocab_index, items, device):
+    """参考实现（逐候选各算一整句），仅用于测试对照。返回 [N, K] 的候选分数张量（不足 K 的位置填 -1e4），可反传。"""
     seqs, cmask_spans, owner = [], [], []
     for n, it in enumerate(items):
         ctx = encode(vocab_index, it["ctx"])[-(model.ctx - 6):]
@@ -79,6 +94,86 @@ def cand_scores(model, vocab_index, items, device):
     ks = torch.tensor([k for _, k in owner], device=device)
     out = torch.full((len(items), K), -1e4, device=device)
     return out.index_put((ns, ks), tot)        # 一次性写入 [N,K]，可反传
+
+
+def cand_scores_8(model, vocab_index, items, device):
+    """第 8 项：布局与 cand_scores 相同，但输出层与 log_softmax 只在候选字符的位置上算。"""
+    seqs, spans, owner = [], [], []
+    for n, it in enumerate(items):
+        ctx = encode(vocab_index, it["ctx"])[-(model.ctx - 6):]
+        for k, c in enumerate(it["c"]):
+            cs = encode(vocab_index, c)
+            seqs.append([BOS] + ctx + cs)
+            spans.append((len(ctx), len(cs)))
+            owner.append((n, k))
+    ids = pad_batch(seqs, device)
+    H = model.hidden(ids[:, :-1])
+    j = torch.arange(H.shape[1], device=device)[None]
+    lo = torch.tensor([a for a, _ in spans], device=device)[:, None]
+    hi = torch.tensor([a + b for a, b in spans], device=device)[:, None]
+    rows, cols = ((j >= lo) & (j < hi)).nonzero(as_tuple=True)
+    logits = H[rows, cols] @ model.emb.weight.T
+    lp = F.log_softmax(logits.float(), -1).gather(-1, ids[:, 1:][rows, cols][:, None]).squeeze(-1)
+    tot = torch.zeros(len(seqs), device=device, dtype=lp.dtype).index_add(0, rows, lp)
+    K = max(len(it["c"]) for it in items)
+    ns = torch.tensor([n for n, _ in owner], device=device)
+    ks = torch.tensor([k for _, k in owner], device=device)
+    return torch.full((len(items), K), -1e4, device=device).index_put((ns, ks), tot)
+
+
+def cand_scores_9(model, vocab_index, items, device):
+    """第 9 项（含第 8 项）：同一题的所有候选共享上下文。每题只有一条序列：[BOS] + 上文 + 各候选依次拼接，
+    用自定义注意力掩码让每个候选只看见上文和自己前面的字，位置编号从上文之后各自重新开始，
+    所以与逐候选单独算完全等价，但上文只算一次。输出层只在需要的位置上算。"""
+    N = len(items)
+    K = max(len(it["c"]) for it in items)
+    toks, poss, masks = [], [], []
+    g_r, g_c, g_t, g_o = [], [], [], []
+    for n, it in enumerate(items):
+        ctx = [BOS] + encode(vocab_index, it["ctx"])[-(model.ctx - 6):]
+        lc = len(ctx)
+        seq, pos, starts = list(ctx), list(range(lc)), []
+        for c in it["c"]:
+            cs = encode(vocab_index, c)
+            starts.append((len(seq), cs))
+            seq += cs
+            pos += [lc + j for j in range(len(cs))]
+        T = len(seq)
+        m = np.ones((T, T), dtype=bool)                       # True = 不允许注意
+        m[:lc, :lc] = np.triu(np.ones((lc, lc), dtype=bool), 1)
+        for k, (st, cs) in enumerate(starts):
+            e = st + len(cs)
+            m[st:e, :lc] = False
+            m[st:e, st:e] = np.triu(np.ones((len(cs), len(cs)), dtype=bool), 1)
+            for j, t in enumerate(cs):                        # 第 j 个字由前一个位置的隐状态预测
+                g_r.append(n)
+                g_c.append(lc - 1 if j == 0 else st + j - 1)
+                g_t.append(t)
+                g_o.append(n * K + k)
+        toks.append(seq)
+        poss.append(pos)
+        masks.append(m)
+    Tm = max(len(x) for x in toks)
+    ids = np.zeros((N, Tm), dtype=np.int64)
+    pp = np.zeros((N, Tm), dtype=np.int64)
+    mk = np.ones((N, Tm, Tm), dtype=bool)
+    for n in range(N):
+        T = len(toks[n])
+        ids[n, :T], pp[n, :T], mk[n, :T, :T] = toks[n], poss[n], masks[n]
+        mk[n, T:, 0] = False                                  # 补齐行至少能看第 0 个位置，避免全屏蔽产生 NaN
+    H = model.hidden(torch.from_numpy(ids).to(device), pos=torch.from_numpy(pp).to(device),
+                     mask=torch.from_numpy(mk).to(device))
+    r = torch.tensor(g_r, device=device)
+    c = torch.tensor(g_c, device=device)
+    logits = H[r, c] @ model.emb.weight.T
+    lp = F.log_softmax(logits.float(), -1).gather(-1, torch.tensor(g_t, device=device)[:, None]).squeeze(-1)
+    tot = torch.zeros(N * K, device=device, dtype=lp.dtype).index_add(0, torch.tensor(g_o, device=device), lp)
+    ns = torch.tensor([n for n, it in enumerate(items) for _ in it["c"]], device=device)
+    ks = torch.tensor([k for it in items for k in range(len(it["c"]))], device=device)
+    return torch.full((N, K), -1e4, device=device).index_put((ns, ks), tot[ns * K + ks])
+
+
+cand_scores = cand_scores_9   # 正式实现：候选共享上下文，与 cand_scores_ref 数值等价（见 tests/test_items_7_9.py）
 
 
 def score_items(model, vocab, items, device):
