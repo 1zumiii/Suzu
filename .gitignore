@@ -1,0 +1,9 @@
+.venv/
+data/
+__pycache__/
+*.pyc
+*.tmp
+*.pt
+# 外部大体积数据（语料、下载的预训练模型、HF 缓存）统一放在 DISTILL_DATA 目录，不入库
+corpus/
+hf/

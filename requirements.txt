@@ -1,0 +1,10 @@
+# torch 由 setup.ps1 单独从 cu128 源安装（RTX 5070 需要 CUDA 12.8 及以上）
+transformers>=4.57
+accelerate
+bitsandbytes
+huggingface_hub
+pyarrow
+jieba
+pypinyin
+opencc-python-reimplemented
+numpy
