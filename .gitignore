@@ -7,3 +7,16 @@ __pycache__/
 # 外部大体积数据（语料、下载的预训练模型、HF 缓存）统一放在 DISTILL_DATA 目录，不入库
 corpus/
 hf/
+
+# 个人化微调：个人语料、个人权重、选词统计只留本机，绝不入库
+select_corpus*
+select_stats*
+.ime-personal/
+personalize/local/
+personalize/out/
+*.personal.*
+student_personal*
+ft_ckpt.pt
+abandoned.json
+manifest.json
+!reports/*.json
