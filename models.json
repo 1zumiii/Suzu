@@ -1,0 +1,5 @@
+{
+  "q35_0p8b": {"hf": "Qwen/Qwen3.5-0.8B", "quant": "none", "role": "small", "smoke": true},
+  "q35_4b":   {"hf": "Qwen/Qwen3.5-4B",   "quant": "nf4", "role": "mid"},
+  "q35_9b":   {"hf": "Qwen/Qwen3.5-9B",   "quant": "nf4",  "role": "teacher"}
+}
