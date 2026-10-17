@@ -74,8 +74,12 @@
 
 ## 已知风险
 
-- Qwen3.5 为混合线性注意力的多模态架构：需要较新的 transformers（`qwen3_5` 架构）。
-  线性注意力的加速内核在 Windows 上通常装不上，会退回慢速实现；题目序列很短，影响有限，但 9B 的打分可能偏慢。
+- Qwen3.5 为混合线性注意力的多模态架构，需要较新的 transformers（`qwen3_5` 架构）。
+  线性注意力有两个加速内核：`flash-linear-attention`（纯 Python，依赖 Triton）和 `causal_conv1d`（需要编译）。
+  未安装时 transformers 会退回慢速实现，结果正确但更慢。实测（Windows 11、RTX 5070、torch 2.11 + cu128）：
+  `pip install triton-windows==3.7.1.post27 flash-linear-attention` 能装上并正常工作，`setup.ps1` 已包含这一步；
+  打分速度 0.8B 从 85.8 提到 131.3 题/秒（+53%），4B(nf4) 从 28.3 提到 42.9 题/秒（+52%），首选与命中数不变。
+  `causal_conv1d` 未安装（需要编译，未试），仍会有一条退回提示。`triton-windows` 的版本与 torch 版本配套，换 torch 版本时要对应调整。
 - 4 位量化需要 bitsandbytes，Windows 版近年才稳定；加载失败时该阶段会被标记失败，其余结果仍会出报告。
 - 模型仓库名按官方命名填写，未逐一实测加载，运行前可用 `python preflight.py` 核对。
 - 语料为维基百科，偏书面语，与日常聊天有差距；评测结论主要反映「同音词在书面上下文中的消歧能力」。
