@@ -16,6 +16,37 @@ from common import CFG, CKPT, DATA, SCORES, log
 from student_model import BOS, PAD, Student, build_vocab, cand_scores, encode, pad_batch
 
 
+class EncStore:
+    """预编码的语料：一维 int16 数组加偏移，按下标取出整句，不再占用数百万个 Python 列表。"""
+
+    def __init__(self, flat, off):
+        self.flat, self.off = flat, off
+
+    def __len__(self):
+        return len(self.off) - 1
+
+    def __getitem__(self, i):
+        return self.flat[self.off[i]:self.off[i + 1]]
+
+
+def load_or_build_enc(sents, vi, vocab, ctx):
+    """句子编码（[BOS] + 字符编号，截到 ctx）缓存到 ckpt/enc_cache.npz，键含词表与句子指纹，不一致则重建。"""
+    import hashlib
+    key = hashlib.md5(("|".join(vocab) + f"|{ctx}|{len(sents)}|{sents[0]}|{sents[-1]}|{sum(map(len, sents[::997]))}"
+                       ).encode("utf-8")).hexdigest()
+    path = CKPT / "enc_cache.npz"
+    if path.exists():
+        z = np.load(path)
+        if str(z["key"]) == key:
+            return EncStore(z["flat"], z["off"])
+    rows = [[BOS] + encode(vi, s)[: ctx - 1] for s in sents]
+    off = np.zeros(len(rows) + 1, dtype=np.int64)
+    off[1:] = np.cumsum([len(r) for r in rows])
+    flat = np.fromiter((x for r in rows for x in r), dtype=np.int16, count=int(off[-1]))
+    np.savez(path, flat=flat, off=off, key=np.array(key))
+    return EncStore(flat, off)
+
+
 def teacher_name():
     if os.environ.get("DISTILL_TEACHER"):
         return os.environ["DISTILL_TEACHER"]
@@ -50,7 +81,7 @@ def run():
         vocab = build_vocab(sents, cfg["vocab_size"])
         C.write_json(vpath, vocab)
     vi = {c: i for i, c in enumerate(vocab)}
-    enc = [[BOS] + encode(vi, s)[: cfg["student_ctx"] - 1] for s in sents]
+    enc = load_or_build_enc(sents, vi, vocab, cfg["student_ctx"])
 
     tname = teacher_name()
     ts = {r["id"]: r["s"] for r in C.read_jsonl(SCORES / f"{tname}__train.jsonl")}
@@ -66,7 +97,8 @@ def run():
     model = Student(len(vocab), cfg["student_d"], cfg["student_layers"], cfg["student_heads"], cfg["student_ctx"]).to(dev)
     nparams = sum(p.numel() for p in model.parameters())
     log(f"学生参数量 {nparams/1e6:.1f} M")
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["student_lr"], betas=(0.9, 0.95), weight_decay=0.1)
+    opt = torch.optim.AdamW(model.parameters(), lr=cfg["student_lr"], betas=(0.9, 0.95), weight_decay=0.1,
+                            fused=(dev == "cuda"))
     steps = cfg["student_steps"]
     step = 0
     last = CKPT / "student_last.pt"
@@ -79,9 +111,12 @@ def run():
     best_path = CKPT / "student_best.pt"
     best = C.read_json(CKPT / "best.json", {"nat": -1})
 
-    def save(path, extra=None):
+    def save(path, extra=None, with_opt=True):
         tmp = path.with_name(path.name + ".tmp")
-        torch.save(dict(model=model.state_dict(), opt=opt.state_dict(), step=step, cfg=cfg, vocab=vocab, **(extra or {})), tmp)
+        state = dict(model=model.state_dict(), step=step, cfg=cfg, vocab=vocab, **(extra or {}))
+        if with_opt:                           # student_best.pt 只用于导出和打分，不存优化器状态
+            state["opt"] = opt.state_dict()
+        torch.save(state, tmp)
         os.replace(tmp, path)
 
     def lr_at(s):
@@ -112,9 +147,10 @@ def run():
                 part = [kd_items[i] for i in rs.randint(0, len(kd_items), cfg["student_batch_kd"])]
                 sc = cand_scores(model, vi, part, dev)
                 K = sc.shape[1]
-                tgt = torch.full((len(part), K), -1e4, device=dev)
+                tgt_np = np.full((len(part), K), -1e4, dtype=np.float32)
                 for n, it in enumerate(part):
-                    tgt[n, :len(it["ts"])] = torch.tensor(it["ts"], device=dev)
+                    tgt_np[n, :len(it["ts"])] = it["ts"]
+                tgt = torch.from_numpy(tgt_np).to(dev)   # 在 numpy 里拼好，只传一次显卡
                 pt = F.softmax(tgt / cfg["kd_temp"], -1)
                 kdv = F.kl_div(F.log_softmax(sc / cfg["kd_temp"], -1), pt, reduction="none").sum(-1)
                 wv = torch.tensor([1.0 + cfg.get("kd_hard_weight", 0.0) * it["s"] for it in part], device=dev)   # 难例加权
@@ -127,21 +163,21 @@ def run():
         step += 1
         prog.tick()
         if step % 100 == 0:
-            C.write_json(C.STATE / "train_last.json", dict(step=step, lm=lm.item(), kd=float(kd), ts=time.time()))
+            C.write_json(C.STATE / "train_last.json", dict(step=step, lm=lm.item(), kd=kd.detach().item(), ts=time.time()))
         if step % cfg["eval_every"] == 0 or step == steps:
             m = evaluate(model, vi, ev_items, w, dev)
-            log(f"[train] step {step} lm={lm.item():.3f} kd={float(kd):.3f} 评测 自然加权 {m['nat']*100:.1f}% 难例 {m['hard']*100:.1f}%")
+            log(f"[train] step {step} lm={lm.item():.3f} kd={kd.detach().item():.3f} 评测 自然加权 {m['nat']*100:.1f}% 难例 {m['hard']*100:.1f}%")
             with open(C.LOGS / "train_metrics.jsonl", "a", encoding="utf-8") as f:
-                f.write(json.dumps(dict(step=step, lm=lm.item(), kd=float(kd), **m)) + "\n")
+                f.write(json.dumps(dict(step=step, lm=lm.item(), kd=kd.detach().item(), **m)) + "\n")
             if m["nat"] > best["nat"]:
                 best = dict(nat=m["nat"], step=step)
-                save(best_path)
+                save(best_path, with_opt=False)
                 C.write_json(CKPT / "best.json", best)
         if step % cfg["ckpt_every"] == 0:
             save(last)
     save(last)
     if not best_path.exists():
-        save(best_path)
+        save(best_path, with_opt=False)
 
     # 粗测 CPU 单线程延迟：一题 = 一组候选
     from student_model import load_student, score_items
