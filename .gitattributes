@@ -1,1 +1,1 @@
-models/student_v2/*.gguf filter=lfs diff=lfs merge=lfs -text
+models/suzu-2/*.gguf filter=lfs diff=lfs merge=lfs -text
