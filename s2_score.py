@@ -169,6 +169,91 @@ class HFScorer:
         return out
 
 
+def _repeat_cache(pkv, r):
+    """把缓存的批维度按 r 复制（相邻复制）。Qwen3.5 的线性注意力层没有现成的 batch_repeat_interleave，这里手动处理：
+    线性注意力层的卷积状态与循环状态，加上完整注意力层的 key/value。"""
+    for layer in pkv.layers:
+        if hasattr(layer, "conv_states"):
+            for i in layer.conv_states:
+                if layer.conv_states[i] is not None:
+                    layer.conv_states[i] = layer.conv_states[i].repeat_interleave(r, 0)
+                if layer.recurrent_states[i] is not None:
+                    layer.recurrent_states[i] = layer.recurrent_states[i].repeat_interleave(r, 0)
+        if getattr(layer, "keys", None) is not None and getattr(layer, "values", None) is not None:
+            layer.keys = layer.keys.repeat_interleave(r, 0)
+            layer.values = layer.values.repeat_interleave(r, 0)
+
+
+def _shared_prefix_scores(self, items, max_seqs=32):
+    """【实验，流水线未使用】教师打分的前缀复用（清单第 10 项）。实测数值正确（首选一致、对真实答案的命中相同），
+    但比 _score 慢：0.8B 为 0.4 到 0.55 倍，4B(nf4) 为 0.85 倍，原因是线性注意力层的循环状态复制开销大于省下的重复计算。
+    测试见 tests/test_teacher_prefix.py。同一题各候选的公共 token 前缀只算一次并缓存，每个候选只算各自不同的尾部。
+    Qwen3.5 含线性注意力层，前缀补齐会破坏循环状态，所以按前缀长度分桶，同长度的题一起算，不补齐前缀。
+    与 _score 的口径完全一致：每个候选从第一个不同的 token 起，对数概率之和。"""
+    torch = self.torch
+    prep, groups = [], {}
+    for idx, it in enumerate(items):
+        tk = self.tok([it["ctx"] + c for c in it["c"]], add_special_tokens=False)["input_ids"]
+        lcp = 0
+        for col in zip(*tk):
+            if len(set(col)) > 1:
+                break
+            lcp += 1
+        lcp = min(lcp, min(len(t) for t in tk) - 1)
+        prep.append((tk, lcp))
+        groups.setdefault(lcp, []).append(idx)
+    out = [None] * len(items)
+    dev = self.model.device
+    for lcp, idxs in groups.items():
+        km_all = max(len(items[i]["c"]) for i in idxs)
+        step = max(1, max_seqs // km_all)
+        for a0 in range(0, len(idxs), step):
+            chunk = idxs[a0:a0 + step]
+            B = len(chunk)
+            Km = max(len(items[i]["c"]) for i in chunk)
+            prefix = torch.tensor([[self.start] + prep[i][0][0][:lcp] for i in chunk], device=dev)
+            first, tails = [], []
+            for i in chunk:
+                tk, _ = prep[i]
+                K = len(tk)
+                for k in range(Km):
+                    t = tk[k if k < K else 0]
+                    first.append(t[lcp])
+                    tails.append(t[lcp:])          # 第 0 个由前缀最后位置预测，其余由尾部前向预测
+            pre = self.model(input_ids=prefix, use_cache=True, logits_to_keep=1)
+            lp0 = pre.logits[:, -1].float().log_softmax(-1)                    # [B,V]
+            s0 = lp0[torch.arange(B, device=dev).repeat_interleave(Km), torch.tensor(first, device=dev)]
+            tot = s0.clone()
+            Tm = max(len(t) for t in tails) - 1
+            if Tm > 0:
+                inp = torch.zeros(B * Km, Tm, dtype=torch.long)
+                for r, t in enumerate(tails):
+                    if len(t) > 1:
+                        inp[r, :len(t) - 1] = torch.tensor(t[:-1])
+                pkv = pre.past_key_values
+                _repeat_cache(pkv, Km)
+                o = self.model(input_ids=inp.to(dev), past_key_values=pkv, use_cache=True)
+                for a1 in range(0, B * Km, 32):
+                    lg = o.logits[a1:a1 + 32].float().log_softmax(-1)
+                    for r in range(lg.shape[0]):
+                        t = tails[a1 + r]
+                        if len(t) > 1:
+                            tgt = torch.tensor(t[1:], device=dev)
+                            tot[a1 + r] += lg[r, torch.arange(len(t) - 1, device=dev), tgt].sum()
+            tot = tot.tolist()
+            for b, i in enumerate(chunk):
+                out[i] = tot[b * Km:b * Km + len(items[i]["c"])]
+    return out
+
+
+HFScorer.score_shared = lambda self, items, **kw: _score_shared_nograd(self, items, **kw)
+
+
+def _score_shared_nograd(self, items, **kw):
+    with self.torch.no_grad():
+        return _shared_prefix_scores(self, items, **kw)
+
+
 class StudentScorer:
     def __init__(self, spec=None):
         import torch
