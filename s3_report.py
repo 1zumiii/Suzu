@@ -56,6 +56,8 @@ def run(final=False):
         systems[k] = f"{v['hf']}（{v.get('quant', 'none')}，角色 {v.get('role', '-')}）"
     if final:
         systems["student"] = "蒸馏学生"
+        if C.ROUND2 and (SCORES / "student_r1.jsonl").exists():
+            systems["student_r1"] = "第一轮学生（16.5M）"
     rows, res = [], {}
     # 词频基线：候选本身按词频降序，选第 0 个
     res["freq"] = dict(easy=1.0, hard=0.0, nat=w[0], se=0.0, n=meta["eval_sampled"])
@@ -137,6 +139,37 @@ def run(final=False):
         if bench:
             L.append(f"学生参数量 {bench['params_m']:.1f} M；本机 CPU 单线程每题（一组候选）约 {bench['ms_per_item']:.1f} ms。"
                      "手机端实际延迟仍需另行实测。")
+    if final:
+        # 候选数敏感性：只对前 K 个候选重排（K 之外的正确答案记为错）
+        L += ["", "## 候选数敏感性（混合自然加权；只重排前 K 个候选）", "", "| 系统 | K=3 | K=5 | K=8 |", "|---|---|---|---|"]
+        for name in systems:
+            r = res.get(name)
+            if r is None:
+                continue
+            sc, cells = load_scores(name), []
+            for K in (3, 5, 8):
+                its = [dict(it, c=it["c"][:K], f=it["f"][:K]) for it in items]
+                m = metrics(its, {i: s[:K] for i, s in sc.items()}, r["fused"]["lam"], w)
+                cells.append(pct(m["nat"]))
+            L.append(f"| {name} | " + " | ".join(cells) + " |")
+        # 四字输入（两个两字词）：候选为两词各取前 3 个同音词的组合
+        fp = DATA / "items_four.jsonl"
+        if fp.exists():
+            four = C.read_jsonl(fp)
+            nf = [sum(1 for it in four if it["s"] == s) for s in (0, 1)]
+            L += ["", f"## 四字输入评测（{len(four)} 题，易例 {nf[0]}、难例 {nf[1]}；首选准确率，无自然加权）", "",
+                  "| 系统 | 纯模型 | 混合 | 难例（混合） |", "|---|---|---|---|",
+                  f"| 词频第一 | {pct(nf[0] / len(four))} | - | 0.0% |"]
+            for name in systems:
+                p = SCORES / f"{name}__four.jsonl"
+                if not p.exists():
+                    continue
+                sc = {r_["id"]: r_["s"] for r_ in C.read_jsonl(p)}
+                lam = (res.get(name) or {}).get("fused", {}).get("lam", 0.5)
+                a = metrics(four, sc, 0, [0.5, 0.5])
+                b = metrics(four, sc, lam, [0.5, 0.5])
+                tot = lambda m: (m["easy"] * m["n"][0] + m["hard"] * m["n"][1]) / max(sum(m["n"]), 1)
+                L.append(f"| {name} | {pct(tot(a))} | {pct(tot(b))} | {pct(b['hard'])} |")
     if res["freq"]:
         L += ["", "注：混合行的 λ 在评测集上选取，数字略乐观，适合相对比较，不宜当作绝对指标。"]
     C.atomic_write(DATA / ("report.md" if final else "report_stage0.md"), "\n".join(L) + "\n")

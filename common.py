@@ -42,10 +42,16 @@ CFG = dict(
     kd_weight=1.0, kd_temp=1.0,
     student_d=384, student_layers=8, student_heads=6, student_ctx=64, vocab_size=6000,
 )
+ROUND2 = os.environ.get("DISTILL_ROUND") == "2"   # 第二轮：更多语料、难例加权、更大的学生、四字评测
+if ROUND2:
+    CFG.update(n_sentences=5_000_000, per_article=8, train_scan=2_500_000, train_easy=150_000, train_hard=450_000,
+               max_per_truth=40, four_per_stratum=3000, ngram_train_sentences=400_000,
+               student_d=512, student_layers=12, student_heads=8, student_steps=120_000,
+               student_lr=5e-4, kd_hard_weight=1.0, ckpt_every=2000, eval_every=4000)
 if os.environ.get("DISTILL_MIN_WORD_LEN"):
     CFG["min_word_len"] = int(os.environ["DISTILL_MIN_WORD_LEN"])
 if SMOKE:
-    CFG.update(n_sentences=4000, min_count=1, eval_per_stratum=150, dev_per_stratum=60, train_scan=3000,
+    CFG.update(n_sentences=4000, min_count=1, eval_per_stratum=150, dev_per_stratum=60, train_easy=750, train_hard=750, four_per_stratum=60, train_scan=3000,
                train_items=1500, ngram_train_sentences=3000, student_steps=150,
                ckpt_every=50, eval_every=75, student_batch_lm=32, student_batch_kd=16)
 

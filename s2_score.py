@@ -224,8 +224,8 @@ def score_unit(out_name, items_path, make):
     prog.tick(0, force=True)
 
 
-def run_eval(name):
-    score_unit(name, DATA / "items_eval.jsonl", lambda: make_scorer(name))
+def run_eval(name, items="items_eval", tag=""):
+    score_unit(name + tag, DATA / (items + ".jsonl"), lambda: make_scorer(name))
 
 
 def run_teacher_train(teacher):

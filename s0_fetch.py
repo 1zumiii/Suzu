@@ -45,20 +45,24 @@ def run():
     from opencc import OpenCC
 
     log("下载/校验维基百科中文分片（已下载过则秒过，中断可续传）…")
-    path = hf_hub_download("wikimedia/wikipedia", "20231101.zh/train-00000-of-00006.parquet", repo_type="dataset")
     cc = OpenCC("t2s")
     rng = random.Random(0)
     seen, rows = set(), []
-    pf = pq.ParquetFile(path)
-    for batch in pf.iter_batches(batch_size=256, columns=["text"]):
-        C.check_stop()
-        for text in batch.column("text").to_pylist():
-            cands = clean_sentences(cc.convert(text), CFG)   # 先转简体再过滤，保证字集一致
-            rng.shuffle(cands)
-            for s in cands[: CFG["per_article"]]:
-                if s not in seen:
-                    seen.add(s)
-                    rows.append(s)
+    for shard in range(6 if C.ROUND2 else 1):   # 第二轮用全部 6 个分片
+        path = hf_hub_download("wikimedia/wikipedia", f"20231101.zh/train-0000{shard}-of-00006.parquet", repo_type="dataset")
+        pf = pq.ParquetFile(path)
+        for batch in pf.iter_batches(batch_size=256, columns=["text"]):
+            C.check_stop()
+            for text in batch.column("text").to_pylist():
+                cands = clean_sentences(cc.convert(text), CFG)   # 先转简体再过滤，保证字集一致
+                rng.shuffle(cands)
+                for s in cands[: CFG["per_article"]]:
+                    if s not in seen:
+                        seen.add(s)
+                        rows.append(s)
+            if len(rows) >= CFG["n_sentences"]:
+                break
+        log(f"分片 {shard} 处理完，累计 {len(rows)} 句")
         if len(rows) >= CFG["n_sentences"]:
             break
     rows = rows[: CFG["n_sentences"]]
