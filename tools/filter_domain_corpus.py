@@ -36,7 +36,17 @@ def main():
     ap.add_argument("--exclude", nargs="*", default=[])
     ap.add_argument("--max-dup-ratio", type=float, default=0.5, help="与已留句子共享的 4 字片段占比上限")
     ap.add_argument("--leak-ratio", type=float, default=0.5, help="与测试句共享的 4 字片段占比达到此值则丢弃")
+    ap.add_argument("--ppl", help="r3_ppl.py 产出的 'nll<TAB>句子' 文件；与 --ppl-drop 一起使用")
+    ap.add_argument("--ppl-drop", type=float, default=0.0, help="丢掉每字平均负对数似然最高的这一比例")
     a = ap.parse_args()
+    ppl_cut = None
+    ppl = {}
+    if a.ppl and a.ppl_drop > 0:
+        for l in open(a.ppl, encoding="utf-8"):
+            v, _, t = l.rstrip("\n").partition("\t")
+            ppl[t] = float(v)
+        vals = sorted(ppl.values())
+        ppl_cut = vals[int(len(vals) * (1 - a.ppl_drop))] if vals else None
     from opencc import OpenCC
     cc = OpenCC("t2s")
     test_grams = set()
@@ -56,6 +66,9 @@ def main():
             continue
         if not ALLOWED.match(t) or any(b in t for b in BAD) or re.search(r"(.)\1{3,}", t) or len(re.findall(r"[A-Za-z]", t)) > 12:
             stat["junk"] += 1
+            continue
+        if ppl_cut is not None and ppl.get(t, 0) > ppl_cut:
+            stat["ppl"] = stat.get("ppl", 0) + 1
             continue
         if t in seen:
             stat["dup"] += 1
