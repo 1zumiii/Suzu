@@ -33,7 +33,7 @@ def main():
         json.dumps({a.name: dict(hf=a.hf, quant=a.quant, role="candidate")}, ensure_ascii=False), encoding="utf-8")
     os.environ["DISTILL_DATA"] = str(data)
     os.environ["DISTILL_MODELS"] = str(data / "models_candidate.json")
-    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(ROOT / "pipeline"))
     import common as C
     import s2_score
     import s3_report as R

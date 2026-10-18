@@ -24,5 +24,5 @@ $py = Join-Path $root ".venv\Scripts\python.exe"
 & $py -m pip install -r requirements.txt
 # 线性注意力加速内核（可选）：Qwen3.5 打分约快 50%。triton-windows 的版本与 torch 版本配套，装不上不影响正确性。
 try { & $py -m pip install "triton-windows==3.7.1.post27" flash-linear-attention } catch { Write-Host "加速内核未安装（可忽略）：$_" }
-& $py preflight.py
+& $py pipeline\preflight.py
 Write-Host "`n环境就绪。先跑冒烟测试：.\run.ps1 smoke"

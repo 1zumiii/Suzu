@@ -15,7 +15,7 @@ import torch.nn.functional as F
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-sys.path.insert(0, str(HERE.parent.parent))
+sys.path.insert(0, str(HERE.parent.parent / "pipeline"))
 import personalize as P  # noqa: E402
 import student_model as S  # noqa: E402
 

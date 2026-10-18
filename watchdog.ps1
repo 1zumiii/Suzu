@@ -12,7 +12,7 @@ $fails = 0
 while ($true) {
     if (Test-Path $stop) { break }
     $t0 = Get-Date
-    cmd /c "`"$py`" -u pipeline.py $Smoke >> `"$log`" 2>&1"
+    cmd /c "`"$py`" -u pipeline\pipeline.py $Smoke >> `"$log`" 2>&1"
     $code = $LASTEXITCODE
     Add-Content -LiteralPath $log -Encoding UTF8 -Value ("[{0}] pipeline.py 退出码 {1}，本次运行 {2:N0} 秒" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $code, ((Get-Date) - $t0).TotalSeconds)
     if ($code -eq 0 -or $code -eq 75) { break }

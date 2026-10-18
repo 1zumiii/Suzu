@@ -4,7 +4,7 @@
   维基语料分片和 HF 模型缓存（`hf\`）、句子与题目（`sentences.txt`、`items_*.jsonl`）、各系统打分（`scores\`）、检查点（`ckpt\`）。
   新增的语料也放在 `DISTILL_DATA\corpus\`，一类一个子目录，并在本文件登记来源与下载日期。
 - **入库的只有**：代码、报告（`reports\`）和训练好的小模型（`models\<名字>\`，GGUF 加词表文件）。
-- 训练检查点（`.pt`，含优化器状态，体积大）不入库，需要时由 `export_gguf.py` 导出。
+- 训练检查点（`.pt`，含优化器状态，体积大）不入库，需要时由 `pipeline/export_gguf.py` 导出。
 
 ## 登记
 
