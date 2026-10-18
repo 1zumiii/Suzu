@@ -44,7 +44,8 @@ TEMPLATE = ("请写 10 句简体中文，场景是{desc}，话题：{topic}，�
 EXTRA = {
     "chat": "多用常见的日常词语。",
     "tech": "可以出现常见的技术术语（中英文混用时英文单词不超过一个）。",
-    "anime": "可以提到作品名、角色名和圈内术语，但只写短的名称和你自己的评论，不要引用台词、歌词或剧情原文。",
+    "anime": "可以提到作品名、角色名和圈内术语，但只写短的名称和你自己的评论，不要引用台词、歌词或剧情原文。"
+             "只提到广为人知的作品和角色；名字拿不准时就用“这个角色”“主角”“这部番”等通用称呼或圈内术语，不要编造名字。",
 }
 
 
@@ -59,6 +60,7 @@ def main():
     ap.add_argument("--top-p", type=float, default=0.95)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--quant", default="nf4")
+    ap.add_argument("--scenes", help="gen_scenes.py 产出的 jsonl（topic、scene），给了就从中抽种子")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -66,6 +68,11 @@ def main():
     import torch
     import transformers
     from transformers import AutoModelForCausalLM, AutoTokenizer
+    scenes = {}
+    if a.scenes:
+        for l in open(a.scenes, encoding="utf-8"):
+            r = json.loads(l)
+            scenes.setdefault(r["topic"], []).append(r["scene"])
     raw = out / f"raw_{a.domain}.jsonl"
     done_n = sum(1 for _ in open(raw, encoding="utf-8")) if raw.exists() else 0
     rng = random.Random(a.seed * 100003 + done_n)
@@ -85,10 +92,14 @@ def main():
     n_lines = done_n
     with open(raw, "a", encoding="utf-8") as f:
         while n_lines < a.target:
+            if (out.parent / "STOP").exists():   # graceful stop requested (r3-ctl pause)
+                print("STOP requested, exiting", flush=True)
+                break
             metas, prompts = [], []
             for _ in range(a.batch):
                 topic, tone = rng.choice(TOPICS[a.domain]), rng.choice(TONES[a.domain])
-                p = TEMPLATE.format(desc=DOMAIN_DESC[a.domain], topic=topic, tone=tone, extra=EXTRA[a.domain])
+                scene = rng.choice(scenes[topic]) if scenes.get(topic) else "任意"
+                p = TEMPLATE.format(desc=DOMAIN_DESC[a.domain], topic=topic, scene=scene, tone=tone, extra=EXTRA[a.domain])
                 msgs = [{"role": "user", "content": p}]
                 try:
                     s = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
