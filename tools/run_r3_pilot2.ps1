@@ -13,7 +13,7 @@ function Step($name, $block) { Log "$(Get-Date -f 'yyyy-MM-dd HH:mm:ss') >>> $na
 foreach ($d in "chat", "tech", "anime") {
   Step "gen_$d" { & $py tools\gen_domain_corpus.py --out $p2 --domain $d --target 6500 --seed 2 }
   Step "filter_$d" {
-    Get-Content "$p1\raw_$d.jsonl", "$p2\raw_$d.jsonl" -Encoding utf8 | Set-Content "$cor\raw_$d.jsonl" -Encoding utf8NoBOM -ErrorAction SilentlyContinue
+    cmd /c copy /b "$p1aw_$d.jsonl"+"$p2aw_$d.jsonl" "$coraw_$d.jsonl"
     & $py tools\filter_domain_corpus.py --raw "$cor\raw_$d.jsonl" --out "$cor\$d.txt" }
 }
 Step "build" { & $py tools\r3_build.py --out $run --wiki-counts D:/distill-data-domain/word_counts.pkl --wiki-train D:/distill-data-r2/train_sentences.txt --wiki-items D:/distill-data-r2/items_train.jsonl --corpus-dir $cor --wiki-n 100000 --dom-items chat=20000 tech=12000 anime=8000 --mix "wiki=80,chat=10,tech=6,anime=4" }
