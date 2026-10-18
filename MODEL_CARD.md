@@ -28,4 +28,4 @@
 
 ## 复现
 
-训练与评测代码：[ime-pinyin-ranker](https://github.com/1zumiii/ime-pinyin-ranker)；输入法集成：[rime-ice-Custom](https://github.com/1zumiii/rime-ice-Custom)。
+训练与评测代码：[Suzu](https://github.com/1zumiii/Suzu)；输入法集成：[rime-ice-Custom](https://github.com/1zumiii/rime-ice-Custom)。
