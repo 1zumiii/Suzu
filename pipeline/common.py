@@ -48,6 +48,11 @@ if ROUND2:
                max_per_truth=40, four_per_stratum=3000, ngram_train_sentences=400_000,
                student_d=512, student_layers=12, student_heads=8, student_steps=120_000,
                student_lr=5e-4, kd_hard_weight=1.0, ckpt_every=2000, eval_every=4000)
+for _k in ("student_steps", "ckpt_every", "eval_every", "student_batch_lm", "student_batch_kd"):   # 试点/续训用的覆盖项
+    if os.environ.get("DISTILL_" + _k.upper()):
+        CFG[_k] = int(os.environ["DISTILL_" + _k.upper()])
+if os.environ.get("DISTILL_STUDENT_LR"):
+    CFG["student_lr"] = float(os.environ["DISTILL_STUDENT_LR"])
 if os.environ.get("DISTILL_MIN_WORD_LEN"):
     CFG["min_word_len"] = int(os.environ["DISTILL_MIN_WORD_LEN"])
 if SMOKE:
