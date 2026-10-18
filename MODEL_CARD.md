@@ -23,8 +23,8 @@
 
 ## 许可与署名
 
-权重按 CC BY-SA 4.0 许可（https://creativecommons.org/licenses/by-sa/4.0/）：可以自由使用、修改和商用，须署名、注明改动，基于它的衍生品（如微调出的新模型）须按相同条款发布。训练数据来自维基百科中文（CC BY-SA 3.0 与 GFDL），教师为 Qwen3.5（Apache-2.0），使用时请保留署名，详见 `NOTICE.md`。
+权重按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) 许可：可以自由使用、修改和商用，须署名、注明改动，基于它的衍生品（如微调出的新模型）须按相同条款发布。训练数据来自维基百科中文（CC BY-SA 3.0 与 GFDL），教师为 Qwen3.5（Apache-2.0），使用时请保留署名，详见 `NOTICE.md`。
 
 ## 复现
 
-训练与评测代码：https://github.com/1zumiii/ime-pinyin-ranker（输入法集成见 https://github.com/1zumiii/rime-ice-Custom）。
+训练与评测代码：[ime-pinyin-ranker](https://github.com/1zumiii/ime-pinyin-ranker)；输入法集成：[rime-ice-Custom](https://github.com/1zumiii/rime-ice-Custom)。
