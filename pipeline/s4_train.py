@@ -97,6 +97,9 @@ def run():
     model = Student(len(vocab), cfg["student_d"], cfg["student_layers"], cfg["student_heads"], cfg["student_ctx"]).to(dev)
     nparams = sum(p.numel() for p in model.parameters())
     log(f"学生参数量 {nparams/1e6:.1f} M")
+    if os.environ.get("DISTILL_INIT") and not (CKPT / "student_last.pt").exists():   # 试点：从已有学生（如 Suzu-2）的权重起步
+        model.load_state_dict(torch.load(os.environ["DISTILL_INIT"], map_location=dev)["model"])
+        log(f"从 {os.environ['DISTILL_INIT']} 初始化权重")
     opt = torch.optim.AdamW(model.parameters(), lr=cfg["student_lr"], betas=(0.9, 0.95), weight_decay=0.1,
                             fused=(dev == "cuda"))
     steps = cfg["student_steps"]
