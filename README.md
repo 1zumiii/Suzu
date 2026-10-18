@@ -52,7 +52,7 @@ Zenfone 10 上 2 线程、6 个候选、含进程间通信，中位 20.1 ms，�
 
 ## 许可
 
-模型权重按 CC BY-SA 4.0 许可（`models/LICENSE.md`）。代码的许可证待定。
+代码按 GPL-3.0 许可（`LICENSE`）；模型权重按 CC BY-SA 4.0 许可（`models/LICENSE.md`）。
 
 
 ## 复现流水线
