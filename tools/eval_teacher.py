@@ -52,15 +52,20 @@ def main():
     for b in a.baseline:
         k, v = b.split("=", 1)
         systems[k] = Path(v)
+    scores = {k: {r["id"]: r["s"] for r in C.read_jsonl(p)} for k, p in systems.items()}
+    # 只在所有系统都打过分的题目上比较，避免候选没跑完（被中断）时拿不同的题集互相比较
+    common = set.intersection(*[set(sc) for sc in scores.values()])
+    items = [it for it in items if it["id"] in common]
     rows, res = [], {}
-    for k, p in systems.items():
-        sc = {r["id"]: r["s"] for r in C.read_jsonl(p)}
+    for k, sc in scores.items():
         pure = R.metrics(items, sc, 0, w)
         best = max((R.metrics(items, sc, lam, w) | {"lam": lam} for lam in R.LAMBDAS), key=lambda m: m["nat"])
         res[k] = (pure, best, len(sc))
         rows.append(f"| {k} | {pure['nat'] * 100:.1f}% | {pure['hard'] * 100:.1f}% | {pure['easy'] * 100:.1f}% | "
-                    f"{best['nat'] * 100:.1f}%（λ={best['lam']}） | {len(sc)} |")
-    out = ["| 系统 | 纯模型 自然加权 | 难例 | 易例 | 混合 自然加权 | 题数 |", "|---|---|---|---|---|---|"] + rows
+                    f"{best['nat'] * 100:.1f}%（λ={best['lam']}） | {len(items)}（共打分 {len(sc)}） |")
+    out = ["| 系统 | 纯模型 自然加权 | 难例 | 易例 | 混合 自然加权 | 比较题数 |", "|---|---|---|---|---|---|"] + rows
+    if len(scores[a.name]) < len(scores[list(systems)[1]] if len(systems) > 1 else scores[a.name]):
+        out += ["", f"注意：候选只打了 {len(scores[a.name])} 题（未跑完），以上只在 {len(items)} 道共同题目上比较，判定仅供参考。"]
     ref = list(systems)[1] if len(systems) > 1 else None
     if ref:
         cp, cb, _ = res[a.name]
