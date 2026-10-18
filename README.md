@@ -6,12 +6,14 @@ Suzu 是一组只做一件事的小模型：给定上文和同一拼音下的若
 
 ## 模型
 
-| 名称 | 目录 | 规模 | 说明 |
-|---|---|---|---|
-| Suzu-1 | `models/suzu-1` | 8 层、384 维、约 16.5M 参数 | 第一轮 |
-| Suzu-2 | `models/suzu-2` | 12 层、512 维、约 40.9M 参数，Q8_0 约 41.9 MiB | 第二轮 |
+模型权重不放在这个仓库里，发布在 Hugging Face：[IzumiThe3rd/Suzu-2](https://huggingface.co/IzumiThe3rd/Suzu-2)（GGUF，Q8_0，约 41.9 MiB，附词表）。
 
-模型目录和文件名与名称一致；训练过程中的中间文件（如 `ckpt/student_best.pt`）仍沿用 `student` 前缀。
+| 名称 | 规模 | 说明 |
+|---|---|---|
+| Suzu-1 | 8 层、384 维、约 16.5M 参数 | 第一轮，仅用于对比，不发布权重 |
+| Suzu-2 | 12 层、512 维、约 40.9M 参数，Q8_0 约 41.9 MiB | 第二轮 |
+
+训练过程中的中间文件（如 `ckpt/student_best.pt`）沿用 `student` 前缀。
 
 ## 评测结果
 
@@ -52,7 +54,7 @@ Zenfone 10 上 2 线程、6 个候选、含进程间通信，中位 20.1 ms，�
 
 ## 许可
 
-代码按 GPL-3.0 许可（`LICENSE`）；模型权重按 CC BY-SA 4.0 许可（`models/LICENSE.md`）。
+代码按 GPL-3.0 许可（`LICENSE`）；模型权重按 CC BY-SA 4.0 许可（见 Hugging Face 上的模型卡和 `NOTICE.md`）。
 
 
 ## 复现流水线
@@ -72,7 +74,7 @@ Zenfone 10 上 2 线程、6 个候选、含进程间通信，中位 20.1 ms，�
 对照系统：词频第一（近似 Rime 默认顺序）、字符三元模型（文法模型基线）、三档 Qwen 模型。
 指标为首选准确率，按评测句里易例与难例的真实比例加权；「混合」一列为模型分加词频先验，对应实际部署里的融合方式。
 
-判定规则（阈值在 `s3_report.py` 顶部，可调）：
+判定规则（阈值在 `pipeline/s3_report.py` 顶部，可调）：
 
 - 教师相对 0.8B 的混合准确率提升 ≥ 1.5 个百分点，或难例提升 ≥ 3 个百分点：说明有蒸馏空间。
 - 0.8B 相对 n-gram 的混合准确率提升 ≥ 2 个百分点：说明大模型确有价值。
@@ -118,7 +120,7 @@ Zenfone 10 上 2 线程、6 个候选、含进程间通信，中位 20.1 ms，�
   打分速度 0.8B 从 85.8 提到 131.3 题/秒（+53%），4B(nf4) 从 28.3 提到 42.9 题/秒（+52%），首选与命中数不变。
   `causal_conv1d` 未安装（需要编译，未试），仍会有一条退回提示。`triton-windows` 的版本与 torch 版本配套，换 torch 版本时要对应调整。
 - 4 位量化需要 bitsandbytes，Windows 版近年才稳定；加载失败时该阶段会被标记失败，其余结果仍会出报告。
-- 模型仓库名按官方命名填写，未逐一实测加载，运行前可用 `python preflight.py` 核对。
+- 模型仓库名按官方命名填写，未逐一实测加载，运行前可用 `python pipeline\preflight.py` 核对。
 - 语料为维基百科，偏书面语，与日常聊天有差距；评测结论主要反映「同音词在书面上下文中的消歧能力」。
 - 学生与教师同口径（对候选取字符对数概率之和），但学生是字符级词表，教师是子词词表，两者只在排序上对齐。
 - 参考延迟为本机 CPU 单线程粗测，手机端需另行实测。
@@ -127,5 +129,6 @@ Zenfone 10 上 2 线程、6 个候选、含进程间通信，中位 20.1 ms，�
 
 ## 目录
 
-`common.py` 公共设施 · `s0_fetch.py` ~ `s4_train.py` 各阶段 · `student_model.py` 学生模型 ·
-`pipeline.py` 总控 · `preflight.py` 预检 · `models.json` 模型清单 · `tests/selftest.py` 自测（无需 GPU）。
+- `pipeline/`：流水线 Python 代码。`common.py` 公共设施，`s0_fetch.py` 到 `s4_train.py` 各阶段，`student_model.py` 学生模型，`pipeline.py` 总控，`preflight.py` 预检，`export_gguf.py` 导出 GGUF。
+- 根目录：`setup.ps1`、`run.ps1`、`run_round2.ps1`、`watchdog.ps1` 启停与守护脚本，`models.json` 模型清单，`requirements.txt`。
+- `tests/`：自测（`tests/selftest.py` 无需 GPU）。`tools/`：数值核对与教师评测脚本。`personalize/`：个人化微调。模型权重在 Hugging Face。`reports/`：评测报告。

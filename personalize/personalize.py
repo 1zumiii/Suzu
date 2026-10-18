@@ -34,7 +34,7 @@ import torch.nn.functional as F
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(REPO / "pipeline"))
 sys.path.insert(0, str(HERE))
 import student_model as S  # noqa: E402
 

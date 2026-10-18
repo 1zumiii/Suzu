@@ -57,7 +57,7 @@ switch ($Cmd) {
         }
     }
     "tail" { Get-Content (Join-Path $base "logs\pipeline.log") -Tail 40 -Wait }
-    "smoke" { & $py pipeline.py --smoke }
+    "smoke" { & $py pipeline\pipeline.py --smoke }
     "retry" {
         Get-ChildItem (Join-Path $base "state") -Filter "*.failed" | Remove-Item
         Remove-Item (Join-Path $base "state\failures.json") -ErrorAction SilentlyContinue

@@ -8,7 +8,7 @@ from pathlib import Path
 
 os.environ.setdefault("DISTILL_DATA", tempfile.mkdtemp(prefix="items79_"))
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "pipeline"))
 
 import numpy as np  # noqa: E402
 import torch  # noqa: E402

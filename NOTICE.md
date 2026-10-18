@@ -16,3 +16,7 @@ Suzu 的训练和评测题均来自维基百科中文（Hugging Face 数据集 `
 
 jieba、pypinyin、opencc-python-reimplemented、transformers、bitsandbytes、flash-linear-attention、triton-windows 等，
 各自遵循其许可证，版本见 `requirements.txt` 与 `setup.ps1`。
+
+## 模型权重的署名
+
+权重按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/legalcode.zh-hans) 许可。署名示例：Suzu 输入法候选排序模型，作者 IzumiThe3rd，来源 Hugging Face 的 IzumiThe3rd/Suzu-2，按 CC BY-SA 4.0 许可。

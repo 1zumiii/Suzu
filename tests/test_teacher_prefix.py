@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("DISTILL_DATA", tempfile.mkdtemp(prefix="teacherprefix_"))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
 
 import torch  # noqa: E402
 

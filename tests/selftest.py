@@ -24,9 +24,9 @@ lines = [rng.choice(subj) + rng.choice("在再") + rng.choice(verb) + "，" + rn
     "small": {"backend": "dummy", "sigma": 3.0, "role": "small", "hf": "dummy/small"},
     "teacher": {"backend": "dummy", "sigma": 0.5, "role": "teacher", "hf": "dummy/teacher"}}))
 
-env = dict(os.environ, PYTHONPATH=f"{tmp/'stubs'}{os.pathsep}{ROOT}", DISTILL_DATA=str(tmp / "data"),
+env = dict(os.environ, PYTHONPATH=f"{tmp/'stubs'}{os.pathsep}{ROOT / 'pipeline'}", DISTILL_DATA=str(tmp / "data"),
            DISTILL_MODELS=str(tmp / "models.json"), DISTILL_CORPUS=str(tmp / "corpus.txt"), DISTILL_MIN_WORD_LEN="1")
-cmd = [sys.executable, str(ROOT / "pipeline.py")]
+cmd = [sys.executable, str(ROOT / "pipeline" / "pipeline.py")]
 # 1) 带停止请求运行：dummy 慢速打分，中途放 STOP
 env["DISTILL_SLOW"] = "0.2"
 p = subprocess.Popen(cmd, env=env, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent   # 仓库根目录（本文件在 pipeline/ 下）
 SMOKE = os.environ.get("DISTILL_SMOKE") == "1"
 BASE = Path(os.environ.get("DISTILL_DATA", ROOT / "data"))
 DATA = BASE / "smoke" if SMOKE else BASE
