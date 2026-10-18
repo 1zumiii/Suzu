@@ -8,6 +8,10 @@ Suzu 的训练和评测题均来自维基百科中文（Hugging Face 数据集 `
 
 教师打分和对照评测使用 Qwen3.5-0.8B、Qwen3.5-4B、Qwen3.5-9B（Qwen 团队，Apache-2.0）。仓库不包含这些模型的权重；训练标签由它们对候选打分得到，学生模型的权重独立训练。
 
+## 合成领域语料
+
+第三轮训练加入了由 Qwen3.5-9B 生成的日常口语、技术、二次元短句，并用 Qwen3.5-4B-Base 做困惑度过滤和标注。这些文本按教师模型（Qwen 团队，Apache-2.0）的输出处理，不含真实个人数据，不复述有版权的作品原文。生成参数和提示词见 `DATA.md`。
+
 ## 依赖
 
 jieba、pypinyin、opencc-python-reimplemented、transformers、bitsandbytes、flash-linear-attention、triton-windows 等，各自遵循其许可证，版本见 `requirements.txt` 与 `setup.ps1`。
