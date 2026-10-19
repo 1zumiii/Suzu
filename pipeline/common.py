@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent   # 仓库根目录（本文件在
 SMOKE = os.environ.get("DISTILL_SMOKE") == "1"
 BASE = Path(os.environ.get("DISTILL_DATA", ROOT / "data"))
 DATA = BASE / "smoke" if SMOKE else BASE
-STATE, SCORES, LOGS, CKPT = (DATA / n for n in ("state", "scores", "logs", "ckpt"))
+OUT = Path(os.environ["DISTILL_RUNDIR"]) if os.environ.get("DISTILL_RUNDIR") else DATA   # sweeps: several runs share one data directory
+SCORES = DATA / "scores"
+STATE, LOGS, CKPT = (OUT / n for n in ("state", "logs", "ckpt"))
 for _p in (STATE, SCORES, LOGS, CKPT):
     _p.mkdir(parents=True, exist_ok=True)
 STOP_FILE = BASE / "STOP"
@@ -51,6 +53,9 @@ if ROUND2:
 for _k in ("student_steps", "ckpt_every", "eval_every", "student_batch_lm", "student_batch_kd"):   # 试点/续训用的覆盖项
     if os.environ.get("DISTILL_" + _k.upper()):
         CFG[_k] = int(os.environ["DISTILL_" + _k.upper()])
+for _k in ("kd_weight", "kd_temp"):   # float overrides for hyper-parameter sweeps
+    if os.environ.get("DISTILL_" + _k.upper()):
+        CFG[_k] = float(os.environ["DISTILL_" + _k.upper()])
 if os.environ.get("DISTILL_STUDENT_LR"):
     CFG["student_lr"] = float(os.environ["DISTILL_STUDENT_LR"])
 if os.environ.get("DISTILL_MIN_WORD_LEN"):

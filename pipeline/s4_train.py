@@ -83,11 +83,24 @@ def run():
     vi = {c: i for i, c in enumerate(vocab)}
     enc = load_or_build_enc(sents, vi, vocab, cfg["student_ctx"])
 
+    seed = int(os.environ.get("DISTILL_SEED", "0"))      # 0 keeps the original sampling order
+    torch.manual_seed(seed)
     tname = teacher_name()
     ts = {r["id"]: r["s"] for r in C.read_jsonl(SCORES / f"{tname}__train.jsonl")}
     kd_items = [it for it in C.read_jsonl(DATA / "items_train.jsonl") if it["id"] in ts]
     for it in kd_items:
         it["ts"] = ts[it["id"]]
+    maxc = int(os.environ.get("DISTILL_KD_MAXCAND", "0"))   # sweep: at most this many candidates per item, the answer always kept
+    if maxc:
+        for it in kd_items:
+            if len(it["c"]) > maxc:
+                idx = list(range(maxc))
+                if it["t"] >= maxc:
+                    idx[-1] = it["t"]
+                it["ts"] = [it["ts"][i] for i in idx]
+                it["c"] = [it["c"][i] for i in idx]
+                it["f"] = [it["f"][i] for i in idx]
+                it["t"] = idx.index(it["t"])
     ev_items = C.read_jsonl(DATA / "items_dev.jsonl")   # 开发集：只用于挑检查点，不参与最终评测
     meta = C.read_json(DATA / "meta.json")
     nat = meta["eval_natural"]
@@ -126,7 +139,8 @@ def run():
         warm = min(500, steps // 10)
         if s < warm:
             return cfg["student_lr"] * (s + 1) / warm
-        return cfg["student_lr"] * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * (s - warm) / max(steps - warm, 1))))
+        fl = float(os.environ.get("DISTILL_LR_FLOOR", "0.1"))
+        return cfg["student_lr"] * (fl + (1 - fl) * 0.5 * (1 + math.cos(math.pi * (s - warm) / max(steps - warm, 1))))
 
     model.train()
     prog = C.Progress("train", steps, step)
@@ -137,7 +151,7 @@ def run():
             save(last)
             log(f"收到停止请求，已在第 {step} 步存盘")
             raise
-        rs = np.random.RandomState(step)
+        rs = np.random.RandomState(step + seed * 1_000_003)
         for g in opt.param_groups:
             g["lr"] = lr_at(step)
         idx = rs.randint(0, len(enc), cfg["student_batch_lm"])
