@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PROMPTS = {"tech": "以下是软件开发与技术社区的讨论：", "anime": "以下是二次元社区的日常聊天："}
+PROMPTS = {"tech": "以下是软件开发与技术社区的讨论：", "anime": "以下是二次元社区的日常聊天：",
+           "slang": "以下是网络社区里的聊天、弹幕和评论："}
 
 
 def main():

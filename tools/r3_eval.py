@@ -45,6 +45,8 @@ def main():
     ap.add_argument("--dom-base", default="D:/distill-data-domain/scores/student.jsonl")
     ap.add_argument("--wiki-items", default="D:/distill-data-r2/items_eval.jsonl")
     ap.add_argument("--holdout", default="D:/distill-data-r3/run/items_holdout.jsonl")
+    ap.add_argument("--base-ckpt", help="compare against this checkpoint (scored live on every set) instead of the stored Suzu-2 scores")
+    ap.add_argument("--base-name", default="Suzu-2")
     a = ap.parse_args()
     import torch
     from student_model import load_student, score_items
@@ -63,9 +65,12 @@ def main():
     hb = {it["id"]: s for it, s in zip(hold, score_items(m2, v2, hold, dev))}
     for d, n in (("tech", "技术"), ("anime", "二次元"), ("chat", "日常口语")):
         sets.append((n + "（新留出）", [i for i in hold if i["domain"] == d], hb))
+    if a.base_ckpt:
+        mb, vb = load_student(a.base_ckpt, dev)
+        sets = [(n, its, {it["id"]: sc for it, sc in zip(its, score_items(mb, vb, its, dev))}) for n, its, _ in sets]
     lam = 0.25
-    lines = [f"# {a.name} 与 Suzu-2 的对比", "", f"检查点 {a.ckpt}。混合 λ={lam}（Suzu-2 在维基上选出的固定值，不再调）。区间为同题配对 95%。小样本题集区间很宽，只作参考。", "",
-             "| 题集 | 题数（难例） | Suzu-2 混合 | 新 混合 | 差（区间） | Suzu-2 纯 | 新 纯 | 差（区间） | 难例 混合 Suzu-2 → 新 |", "|---|---|---|---|---|---|---|---|---|"]
+    lines = [f"# {a.name} 与 {a.base_name} 的对比", "", f"检查点 {a.ckpt}。混合 λ={lam}（Suzu-2 在维基上选出的固定值，不再调）。区间为同题配对 95%。小样本题集区间很宽，只作参考。", "",
+             f"| 题集 | 题数（难例） | {a.base_name} 混合 | 新 混合 | 差（区间） | {a.base_name} 纯 | 新 纯 | 差（区间） | 难例 混合 {a.base_name} → 新 |", "|---|---|---|---|---|---|---|---|---|"]
     for name, items, base in sets:
         new_s = {it["id"]: s for it, s in zip(items, score_items(model, vocab, items, dev))}
         hard = [i for i in items if i["s"]]
