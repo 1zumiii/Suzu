@@ -6,11 +6,11 @@ Suzu 的训练和评测题均来自维基百科中文（Hugging Face 数据集 `
 
 ## 教师与对照模型
 
-教师打分和对照评测使用 Qwen3.5-0.8B、Qwen3.5-4B、Qwen3.5-9B（Qwen 团队，Apache-2.0）。仓库不包含这些模型的权重；训练标签由它们对候选打分得到，学生模型的权重独立训练。
+教师打分和对照评测使用 Qwen3.5-0.8B、Qwen3.5-4B、Qwen3.5-4B-Base、Qwen3.5-9B（Qwen 团队，Apache-2.0）。仓库不包含这些模型的权重；训练标签由它们对候选打分得到，学生模型的权重独立训练。
 
 ## 合成领域语料
 
-第三轮训练加入了由 Qwen3.5-9B 生成的日常口语、技术、二次元短句，并用 Qwen3.5-4B-Base 做困惑度过滤和标注。这些文本按教师模型（Qwen 团队，Apache-2.0）的输出处理，不含真实个人数据，不复述有版权的作品原文。生成参数和提示词见 `DATA.md`。
+Suzu-2.1 的续训加入了由 Qwen3.5-9B 生成的日常口语、技术、二次元短句，并用 Qwen3.5-4B-Base 做困惑度过滤和标注。这些文本按教师模型（Qwen 团队，Apache-2.0）的输出处理，不含真实个人数据，不复述有版权的作品原文。生成参数和提示词见 `DATA.md`。
 
 ## 依赖
 
@@ -18,4 +18,4 @@ jieba、pypinyin、opencc-python-reimplemented、transformers、bitsandbytes、f
 
 ## 模型权重的署名
 
-权重按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/legalcode.zh-hans) 许可。署名示例：Suzu 输入法候选排序模型，作者 IzumiThe3rd，来源 Hugging Face 的 IzumiThe3rd/Suzu-2，按 CC BY-SA 4.0 许可。
+权重按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/legalcode.zh-hans) 许可。署名示例：Suzu 输入法候选排序模型，作者 IzumiThe3rd，来源 Hugging Face 的 IzumiThe3rd/Suzu-2.1（或 IzumiThe3rd/Suzu-2），按 CC BY-SA 4.0 许可。
