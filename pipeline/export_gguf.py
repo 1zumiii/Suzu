@@ -29,7 +29,8 @@ def main():
     w.add_feed_forward_length(4 * d)
     w.add_head_count(H)
     w.add_layer_norm_eps(1e-5)
-    w.add_file_type(gguf.LlamaFileType.ALL_F32)
+    q8 = os.environ.get("SUZU_Q8") == "1"      # Q8_0 for 2-D weights (not the position table), like the released models
+    w.add_file_type(gguf.LlamaFileType.MOSTLY_Q8_0 if q8 else gguf.LlamaFileType.ALL_F32)
     # 占位分词器（llama.cpp 加载时要求有词表）
     w.add_tokenizer_model("llama")
     w.add_token_list([t if len(t) else "<empty>" for t in vocab])
@@ -42,24 +43,30 @@ def main():
     def t(name):
         return sd[name].float().numpy().astype(np.float32)
 
-    w.add_tensor("token_embd.weight", t("emb.weight"))
-    w.add_tensor("position_embd.weight", t("pos.weight"))
-    w.add_tensor("output_norm.weight", t("ln.weight"))
-    w.add_tensor("output_norm.bias", t("ln.bias"))
+    def add_tensor(name, arr):
+        if q8 and arr.ndim == 2 and name != "position_embd.weight":
+            w.add_tensor(name, gguf.quants.quantize(arr, gguf.GGMLQuantizationType.Q8_0), raw_dtype=gguf.GGMLQuantizationType.Q8_0)
+        else:
+            w.add_tensor(name, arr)
+
+    add_tensor("token_embd.weight", t("emb.weight"))
+    add_tensor("position_embd.weight", t("pos.weight"))
+    add_tensor("output_norm.weight", t("ln.weight"))
+    add_tensor("output_norm.bias", t("ln.bias"))
     for i in range(L):
         p = f"blocks.layers.{i}."
-        w.add_tensor(f"blk.{i}.attn_norm.weight", t(p + "norm1.weight"))
-        w.add_tensor(f"blk.{i}.attn_norm.bias", t(p + "norm1.bias"))
-        w.add_tensor(f"blk.{i}.attn_qkv.weight", t(p + "self_attn.in_proj_weight"))
-        w.add_tensor(f"blk.{i}.attn_qkv.bias", t(p + "self_attn.in_proj_bias"))
-        w.add_tensor(f"blk.{i}.attn_output.weight", t(p + "self_attn.out_proj.weight"))
-        w.add_tensor(f"blk.{i}.attn_output.bias", t(p + "self_attn.out_proj.bias"))
-        w.add_tensor(f"blk.{i}.ffn_norm.weight", t(p + "norm2.weight"))
-        w.add_tensor(f"blk.{i}.ffn_norm.bias", t(p + "norm2.bias"))
-        w.add_tensor(f"blk.{i}.ffn_up.weight", t(p + "linear1.weight"))
-        w.add_tensor(f"blk.{i}.ffn_up.bias", t(p + "linear1.bias"))
-        w.add_tensor(f"blk.{i}.ffn_down.weight", t(p + "linear2.weight"))
-        w.add_tensor(f"blk.{i}.ffn_down.bias", t(p + "linear2.bias"))
+        add_tensor(f"blk.{i}.attn_norm.weight", t(p + "norm1.weight"))
+        add_tensor(f"blk.{i}.attn_norm.bias", t(p + "norm1.bias"))
+        add_tensor(f"blk.{i}.attn_qkv.weight", t(p + "self_attn.in_proj_weight"))
+        add_tensor(f"blk.{i}.attn_qkv.bias", t(p + "self_attn.in_proj_bias"))
+        add_tensor(f"blk.{i}.attn_output.weight", t(p + "self_attn.out_proj.weight"))
+        add_tensor(f"blk.{i}.attn_output.bias", t(p + "self_attn.out_proj.bias"))
+        add_tensor(f"blk.{i}.ffn_norm.weight", t(p + "norm2.weight"))
+        add_tensor(f"blk.{i}.ffn_norm.bias", t(p + "norm2.bias"))
+        add_tensor(f"blk.{i}.ffn_up.weight", t(p + "linear1.weight"))
+        add_tensor(f"blk.{i}.ffn_up.bias", t(p + "linear1.bias"))
+        add_tensor(f"blk.{i}.ffn_down.weight", t(p + "linear2.weight"))
+        add_tensor(f"blk.{i}.ffn_down.bias", t(p + "linear2.bias"))
     w.write_header_to_file()
     w.write_kv_data_to_file()
     w.write_tensors_to_file()
