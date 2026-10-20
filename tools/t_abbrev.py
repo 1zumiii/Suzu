@@ -82,7 +82,14 @@ def cmd_report(a):
     items = load_cache(a.cache)
     data = Path(a.data)
     models = {"学生 Suzu-2.1": [t["s"] for t in items]}
-    for name in a.name:
+    for spec in a.model_cache or []:
+        nm, _, path = spec.partition("=")
+        other = load_cache(path)
+        if len(other) != len(items) or any(x["ans"] != y["ans"] or x["ctx"] != y["ctx"] for x, y in zip(items, other)):
+            print(f"警告：{nm} 的题与基线不一致，跳过", file=sys.stderr)
+            continue
+        models[nm] = [t["s"] for t in other]
+    for name in a.name or []:
         chunks = {}
         for ln in open(data / "scores" / f"{name}__abbrev.jsonl", encoding="utf-8"):
             r = json.loads(ln)
@@ -100,7 +107,7 @@ def cmd_report(a):
     done = [n for n in range(len(items)) if all(models[m][n] is not None for m in models)]
     lines = []
     out = lines.append
-    out("# 简拼教师天花板")
+    out("# 简拼评测（模型分，整个候选池）" if not a.name else "# 简拼教师天花板")
     out("")
     out(f"题数 {len(done)}（答案为两字词，输入为两个字的首字母；候选池为词典里首字母相同的全部两字词，每题平均 "
         f"{sum(len(items[n]['words']) for n in done) / len(done):.0f} 个，最多 {max(len(items[n]['words']) for n in done)} 个）。"
@@ -155,7 +162,8 @@ def main():
     p = sub.add_parser("items"); p.add_argument("--cache", required=True); p.add_argument("--data", required=True)
     p = sub.add_parser("label"); p.add_argument("--data", required=True); p.add_argument("--model", required=True); p.add_argument("--name", required=True)
     p = sub.add_parser("report"); p.add_argument("--cache", required=True); p.add_argument("--data", required=True)
-    p.add_argument("--out", required=True); p.add_argument("--name", action="append", required=True)
+    p.add_argument("--out", required=True); p.add_argument("--name", action="append")
+    p.add_argument("--model-cache", action="append", help="NAME=cache.json：另一个学生模型在同一批题上的候选池打分（proto.py score 写出）")
     a = ap.parse_args()
     {"items": cmd_items, "label": cmd_label, "report": cmd_report}[a.cmd](a)
 
