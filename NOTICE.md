@@ -12,10 +12,14 @@ Suzu 的训练和评测题均来自维基百科中文（Hugging Face 数据集 `
 
 Suzu-2.1 的续训加入了由 Qwen3.5-9B 生成的日常口语、技术、二次元短句，并用 Qwen3.5-4B-Base 做困惑度过滤和标注。这些文本按教师模型（Qwen 团队，Apache-2.0）的输出处理，不含真实个人数据，不复述有版权的作品原文。生成参数和提示词见 `DATA.md`。
 
+## 词库
+
+Suzu-2.4 的简拼训练题，其候选词取自雾凇拼音（[rime-ice](https://github.com/iDvel/rime-ice)，GPL-3.0）的词库：每道题的候选为答案加词库中同缩写的若干词。词库只提供词条和权重，作为训练时的候选，仓库与模型权重都不含词库原文。用词库派生的候选训练得到的权重是否适用词库的许可条款，目前没有定论，与上文维基百科语料的情形相同；使用时请保留对雾凇拼音及其贡献者的署名。
+
 ## 依赖
 
 jieba、pypinyin、opencc-python-reimplemented、transformers、bitsandbytes、flash-linear-attention、triton-windows 等，各自遵循其许可证，版本见 `requirements.txt` 与 `setup.ps1`。
 
 ## 模型权重的署名
 
-权重按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/legalcode.zh-hans) 许可。署名示例：Suzu 输入法候选排序模型，作者 IzumiThe3rd，来源 Hugging Face 的 IzumiThe3rd/Suzu-2.1（或 IzumiThe3rd/Suzu-2），按 CC BY-SA 4.0 许可。
+权重按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/legalcode.zh-hans) 许可。署名示例：Suzu 输入法候选排序模型，作者 IzumiThe3rd，来源 Hugging Face 的 IzumiThe3rd/Suzu-2.4（或 IzumiThe3rd/Suzu-2.1、IzumiThe3rd/Suzu-2），按 CC BY-SA 4.0 许可。
