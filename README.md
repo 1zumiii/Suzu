@@ -1,6 +1,6 @@
 # Suzu：输入法候选排序小模型
 
-Suzu 是一组只做一件事的小模型：给定上文和同一拼音下的若干候选词，对候选打分排序。它由 Qwen3.5 作教师蒸馏而来，字符级词表（6000 字），Q8_0 量化后约 44 MB（41.9 MiB），手机 CPU 上约 20 ms 完成一次打分，评测准确率与 Qwen3.5-0.8B 相当。训练只使用公开语料，不含任何个人数据。
+Suzu 是一组只做一件事的小模型：给定上文和同一拼音下的若干候选词，对候选打分排序。它由 Qwen3.5 作教师蒸馏而来，字符级词表（6000 字），Q8_0 量化后约 44 MB（41.9 MiB），手机 CPU 上用输入法的推理核心打分，中位约 11 ms，评测准确率与 Qwen3.5-0.8B 相当。训练只使用公开语料、教师模型生成的合成句子和公开词库，不含任何个人数据。
 
 ## 模型
 
@@ -18,7 +18,7 @@ Suzu 是一组只做一件事的小模型：给定上文和同一拼音下的若
 
 ## 评测结果
 
-评测集为 16000 道题（上文 + 拼音，在同音候选中选出语料中真实出现的词），来自维基百科中文，易例与难例各半，按真实比例加权。指标为首选准确率，“混合”为模型分加词频先验。完整报告见 `reports/round2/report.md`。
+评测集为 16000 道题（上文 + 拼音，在同音候选中选出语料中真实出现的词），来自维基百科中文，易例与难例各半，按真实比例加权。指标为首选准确率，“混合”为模型分加词频先验。完整报告见 `reports/round2/report.md`。下表是 Suzu-2 的评测；Suzu-2.1 与 Suzu-2.4 相对前一版的对比见后面各节。
 
 | 系统 | 混合（自然加权） | 难例（纯模型） |
 |---|---|---|
@@ -29,7 +29,7 @@ Suzu 是一组只做一件事的小模型：给定上文和同一拼音下的若
 | **Suzu-2** | **92.8%** | **72.4%** |
 | Qwen3.5-9B（教师） | 95.1% | 80.1% |
 
-延迟：桌面 CPU 上 Suzu-2 在 2 线程下约 21 ms（8 个候选合成一批，前缀可后台预解码）；Zenfone 10 上 2 线程、6 个候选、含进程间通信，中位 20.1 ms，守护进程常驻内存约 115 MB。详见 `reports/round2/latency.md`。
+延迟与内存：下面的数字是旧推理核心（2026-10-19 重写之前）测得的，保留作历史记录：桌面 CPU 上 Suzu-2 在 2 线程下约 21 ms，Zenfone 10 上中位 20.1 ms，守护进程常驻内存约 115 MB，详见 `reports/round2/latency.md`。新核心下手机打分中位约 11 ms，守护进程常驻内存约 61 MB（不含候选生成），见 [suzu-ime 的技术报告](https://github.com/1zumiii/suzu-ime/blob/main/docs/technical-report.md)。
 
 ## Suzu-2.4
 
@@ -60,7 +60,7 @@ Suzu-2.1 在 Suzu-2 的权重上续训，结构、词表和文件大小不变，
 | Zenfone 10 常驻内存（VmRSS） | 约 116 MB | 约 116 MB |
 | Q8_0 体积 | 43.9 MB | 43.9 MB |
 
-手机延迟与内存为交替运行两轮的实测，Suzu-2 与 Suzu-2.1 无差别。
+以上延迟与内存为旧推理核心下交替运行两轮的实测，Suzu-2 与 Suzu-2.1 无差别；新核心的数字见上文的链接。
 
 ### 注意事项
 
@@ -111,7 +111,7 @@ Suzu-2.1 在 Suzu-2 的权重上续训，结构、词表和文件大小不变，
 | score_* | n-gram 基线、Qwen3.5 的 0.8B / 4B / 9B 各自给每道题的候选打分 | `scores/*.jsonl` |
 | report0 | 汇总首选准确率，给出是否继续的判定 | `report_stage0.md`、`gates.json` |
 | teacher_train | 教师给训练题打分（仅判定通过时执行） | `scores/<教师>__train.jsonl` |
-| train | 训练约 16 M 参数的字符级学生：语言模型损失 + 候选排序的 KL | `ckpt/student_best.pt` |
+| train | 训练字符级学生（当前约 40.9 M 参数，Suzu-1 为 16.5 M）：语言模型损失 + 候选排序的 KL | `ckpt/student_best.pt` |
 | score_student、report_final | 学生在评测题上打分并出终稿 | `report.md` |
 
 对照系统：词频第一（近似 Rime 默认顺序）、字符三元模型（文法模型基线）、三档 Qwen 模型。指标为首选准确率，按评测句里易例与难例的真实比例加权；“混合”一列为模型分加词频先验，对应实际部署里的融合方式。
@@ -170,4 +170,4 @@ Suzu-2.1 在 Suzu-2 的权重上续训，结构、词表和文件大小不变，
 
 - `pipeline/`：Python 代码。`common.py` 公共设施，`s0_fetch.py` 到 `s4_train.py` 各阶段，`student_model.py` 学生模型，`pipeline.py` 总控，`preflight.py` 预检，`export_gguf.py` 导出 GGUF。
 - 根目录：`setup.ps1`、`run.ps1`、`run_round2.ps1`、`watchdog.ps1` 启停与守护脚本，`models.json` 模型清单，`requirements.txt`。
-- `tests/`：自测（`tests/selftest.py` 无需 GPU）。`tools/`：数值核对与教师评测脚本。`personalize/`：个人化微调。模型权重在 Hugging Face。`reports/`：评测报告。
+- `tests/`：自测（`tests/selftest.py` 无需 GPU）。`tools/`：数值核对、教师评测、各轮续训与评测脚本（`run_r3_*.ps1` 为第三轮领域语料）。`personalize/`：个人化微调。模型权重在 Hugging Face。`reports/`：评测报告。
