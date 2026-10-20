@@ -126,6 +126,96 @@ def cmd_build(a):
           f"简拼 {sum(1 for it in items if it['mode'] == 'abbr')}、混合 {sum(1 for it in items if it['mode'] == 'mix')}")
 
 
+def cmd_build2(a):
+    """第二批题：候选里加入学生自己（Suzu-2.1）在整个候选池里排得靠前的词（难例），与第一批的题不重复。
+    候选 = 答案 + 学生分最高的 20 个 + 词库权重最高的 14 个 + 随机 13 个（同缩写的词，去重）。"""
+    sys.path.insert(0, str(ROOT / "pipeline"))
+    import torch
+    from student_model import load_student, score_items
+    out = Path(a.out)
+    rng = random.Random(a.seed)
+    words, pa, pm = load_dict()
+    sh = shingles()
+    seen = set()
+    for l in open(out / a.exclude, encoding="utf-8"):
+        r = json.loads(l)
+        seen.add((r["ctx"], r["word"]))
+    quota = {"wiki": int(a.n * 0.30), "chat": int(a.n * 0.25), "tech": int(a.n * 0.25)}
+    quota["anime"] = a.n - sum(quota.values())
+    src = {"wiki": RUN3 / "train_sentences.txt", "chat": BIG / "chat.txt", "tech": BIG / "tech.txt", "anime": BIG / "anime.txt"}
+    recs, per_word = [], defaultdict(int)
+    for dom, q in quota.items():
+        sents = [l.strip() for l in open(src[dom], encoding="utf-8") if 6 <= len(l.strip()) <= 120]
+        rng.shuffle(sents)
+        got = 0
+        for s in sents:
+            if got >= q:
+                break
+            if leaked(s, sh):
+                continue
+            pos = [i for i in range(4, len(s) - 1) if s[i:i + 2] in words and CJK.match(s[i - 4:i + 2])]
+            if not pos:
+                continue
+            i = rng.choice(pos)
+            w = s[i:i + 2]
+            ctx = s[max(0, i - 40):i]
+            if per_word[w] >= 60 or (ctx, w) in seen:
+                continue
+            mode = "abbr" if rng.random() < 0.7 else "mix"
+            best = max(words[w])
+            key = best[1] if mode == "abbr" else best[2]
+            pool = (pa if mode == "abbr" else pm)[key]
+            if len(pool) < 6 or w not in pool:
+                continue
+            recs.append({"ctx": ctx, "w": w, "key": key, "mode": mode, "dom": dom, "pool": pool})
+            per_word[w] += 1
+            got += 1
+        print(f"{dom}: {got}/{q}", flush=True)
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    model, vocab = load_student(a.student_ckpt, dev)
+    print(f"学生给 {len(recs)} 题的整个候选池打分……", flush=True)
+    chunk_items, owner = [], []
+    for n, r in enumerate(recs):
+        ws = sorted(r["pool"], key=lambda x: -r["pool"][x])
+        r["ranked"] = ws
+        for k in range(0, len(ws), 100):
+            chunk_items.append({"ctx": r["ctx"], "c": ws[k:k + 100]})
+            owner.append((n, k))
+    scores = [dict() for _ in recs]
+    with torch.no_grad():
+        for a0 in range(0, len(chunk_items), 64):
+            part = chunk_items[a0:a0 + 64]
+            res = score_items(model, vocab, part, dev)
+            for (n, k), it, sc in zip(owner[a0:a0 + 64], part, res):
+                for wd, v in zip(it["c"], sc):
+                    scores[n][wd] = v
+            if (a0 // 64) % 100 == 0:
+                print(f"  打分 {a0}/{len(chunk_items)} 块", flush=True)
+    items, nid = [], a.id0
+    for r, sc in zip(recs, scores):
+        w, pool = r["w"], r["pool"]
+        rest = [x for x in r["ranked"] if x != w]
+        hard = sorted(rest, key=lambda x: -sc.get(x, -1e9))[:20]
+        taken = set(hard)
+        top = [x for x in rest if x not in taken][:14]
+        taken |= set(top)
+        left = [x for x in rest if x not in taken]
+        rnd = rng.sample(left, min(13, len(left)))
+        cands = sorted(set(hard + top + rnd + [w]), key=lambda x: -pool[x])
+        items.append({"id": nid, "ctx": r["ctx"], "py": r["key"], "c": cands, "f": [pool[x] for x in cands],
+                      "t": cands.index(w), "s": int(cands.index(w) > 0), "L": 2, "word": w, "domain": r["dom"], "mode": r["mode"],
+                      "student_rank": 1 + sum(1 for x in rest if sc.get(x, -1e9) > sc.get(w, -1e9))})
+        nid += 1
+    rng.shuffle(items)
+    with open(out / a.name, "w", encoding="utf-8") as f:
+        for it in items:
+            f.write(json.dumps(it, ensure_ascii=False) + "\n")
+    tot = sum(len(it["c"]) for it in items)
+    first = sum(1 for it in items if it["student_rank"] == 1)
+    print(f"共 {len(items)} 题，候选 {tot} 个（平均 {tot / len(items):.1f}），学生已排第一的占 {100 * first / len(items):.1f}%，"
+          f"简拼 {sum(1 for it in items if it['mode'] == 'abbr')}、混合 {sum(1 for it in items if it['mode'] == 'mix')}")
+
+
 def cmd_label(a):
     out = Path(a.out)
     (out / "scores").mkdir(parents=True, exist_ok=True)
@@ -138,14 +228,15 @@ def cmd_label(a):
     import common as C
     import s2_score
     C.install_signals()
-    rows = [json.loads(l) for l in open(out / "items_abbrev.jsonl", encoding="utf-8")]
+    rows = [json.loads(l) for l in open(out / a.items, encoding="utf-8")]
     for r in rows:
         r["ctx"] = PROMPTS.get(r["domain"], "") + r["ctx"]
-    C.write_jsonl(out / "items_abbrev_prompted.jsonl", rows)
-    s2_score.score_unit("abbrev_train__q35_4b_base", out / "items_abbrev_prompted.jsonl", lambda: s2_score.make_scorer(name))
-    got = len(C.load_done_ids(out / "scores" / "abbrev_train__q35_4b_base.jsonl"))
+    pf = out / (Path(a.items).stem + "_prompted.jsonl")
+    C.write_jsonl(pf, rows)
+    s2_score.score_unit(a.score_name, pf, lambda: s2_score.make_scorer(name))
+    got = len(C.load_done_ids(out / "scores" / (a.score_name + ".jsonl")))
     if got >= len(rows):
-        (out / "label_done.flag").write_text(f"{got}/{len(rows)}", encoding="ascii")
+        (out / a.flag).write_text(f"{got}/{len(rows)}", encoding="ascii")
     else:
         print(f"未打完：{got}/{len(rows)}", flush=True)
         sys.exit(1)
@@ -157,6 +248,11 @@ def cmd_mix(a):
     (out / "ckpt").mkdir(parents=True, exist_ok=True)
     rng = random.Random(a.seed)
     ab_items = [json.loads(l) for l in open(ab / "items_abbrev.jsonl", encoding="utf-8")]
+    score_files = [ab / "scores" / "abbrev_train__q35_4b_base.jsonl"]
+    for spec in a.extra or []:
+        fn, _, sn = spec.partition(":")
+        ab_items += [json.loads(l) for l in open(ab / fn, encoding="utf-8")]
+        score_files.append(ab / "scores" / (sn + ".jsonl"))
     old = [json.loads(l) for l in open(RUN3 / "items_train.jsonl", encoding="utf-8")]
     old_scores = {}
     for l in open(RUN3 / "scores" / "q35_4b_base__train.jsonl", encoding="utf-8"):
@@ -170,8 +266,9 @@ def cmd_mix(a):
         for it in items:
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
     with open(out / "scores" / "q35_4b_base__train.jsonl", "w", encoding="utf-8") as f:
-        for l in open(ab / "scores" / "abbrev_train__q35_4b_base.jsonl", encoding="utf-8"):
-            f.write(l if l.endswith("\n") else l + "\n")
+        for sf in score_files:
+            for l in open(sf, encoding="utf-8"):
+                f.write(l if l.endswith("\n") else l + "\n")
         for it in replay:
             f.write(json.dumps(old_scores[it["id"]], ensure_ascii=False) + "\n")
     import shutil
@@ -186,11 +283,18 @@ def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("build"); p.add_argument("--out", required=True); p.add_argument("--n", type=int, default=24000); p.add_argument("--seed", type=int, default=5)
+    p = sub.add_parser("build2"); p.add_argument("--out", required=True); p.add_argument("--n", type=int, default=36000)
+    p.add_argument("--seed", type=int, default=17); p.add_argument("--id0", type=int, default=20_000_000)
+    p.add_argument("--name", default="items_abbrev2.jsonl"); p.add_argument("--exclude", default="items_abbrev.jsonl")
+    p.add_argument("--student-ckpt", required=True)
     p = sub.add_parser("label"); p.add_argument("--out", required=True)
+    p.add_argument("--items", default="items_abbrev.jsonl"); p.add_argument("--score-name", default="abbrev_train__q35_4b_base")
+    p.add_argument("--flag", default="label_done.flag")
     p = sub.add_parser("mix"); p.add_argument("--abbrev", required=True); p.add_argument("--out", required=True)
     p.add_argument("--replay-n", type=int, default=48000); p.add_argument("--seed", type=int, default=11)
+    p.add_argument("--extra", action="append", help="ITEMS文件:打分文件名（不带 .jsonl），追加的简拼题")
     a = ap.parse_args()
-    {"build": cmd_build, "label": cmd_label, "mix": cmd_mix}[a.cmd](a)
+    {"build": cmd_build, "build2": cmd_build2, "label": cmd_label, "mix": cmd_mix}[a.cmd](a)
 
 
 if __name__ == "__main__":
