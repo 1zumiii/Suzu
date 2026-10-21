@@ -67,7 +67,7 @@
 ## 权重与脚本
 
 - 发布的权重为 Suzu-2.4（臂 C，Q8_0，sha256 前缀 `a2ff2c46`），见 [Hugging Face](https://huggingface.co/IzumiThe3rd/Suzu-2.4)。词表与 Suzu-2.1 逐字节相同。
-- 脚本：`tools/t_abbrev.py`（教师上限）、`tools/t_abbrev_train.py`（出题、教师标注、混合训练、整池评测）。各步骤由训练机上的驱动脚本串联运行，驱动脚本含本机路径，未收录。
+- 脚本：`tools/t_abbrev.py`（教师上限）、`tools/t_abbrev_train.py`（出题、教师标注、混合训练、整池评测）。
 
 ## 原始表
 

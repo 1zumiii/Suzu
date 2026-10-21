@@ -124,7 +124,7 @@ Suzu-2.1 在 Suzu-2 的权重上续训，结构、词表和文件大小不变，
 
 ## 运行 pipeline
 
-`tools/run_r3_*.ps1` 与 `reports/` 里的路径（`C:\Users\…\work`、`D:\distill-data-*`、`E:\Suzu-data`）是训练机上的数据与构建目录，属于复现记录。在别的机器上运行须改成本机路径；评测用的词库目录用环境变量 `CN_DICTS` 指定（rime-suzu 的词库包安装后的 `cn_dicts`）。
+脚本与报告里的数据目录（`D:\distill-data-*`、`E:\Suzu-data`）按本机情况修改；评测用的词库目录用环境变量 `CN_DICTS` 指定（rime-suzu 的词库包安装后的 `cn_dicts`）。
 
 
 下载内容需事先确认：
@@ -173,4 +173,4 @@ Suzu-2.1 在 Suzu-2 的权重上续训，结构、词表和文件大小不变，
 
 - `pipeline/`：Python 代码。`common.py` 公共设施，`s0_fetch.py` 到 `s4_train.py` 各阶段，`student_model.py` 学生模型，`pipeline.py` 总控，`preflight.py` 预检，`export_gguf.py` 导出 GGUF。
 - 根目录：`setup.ps1`、`run.ps1`、`run_round2.ps1`、`watchdog.ps1` 启停与守护脚本，`models.json` 模型清单，`requirements.txt`。
-- `tests/`：自测（`tests/selftest.py` 无需 GPU）。`tools/`：数值核对、教师评测、各轮续训与评测脚本（`run_r3_*.ps1` 为第三轮领域语料；第四轮及之后的各步骤是 `r4_*.py`、`t_*.py`、`g_*.py`、`frost_eval.py`，由训练机上的驱动脚本串联运行，驱动脚本含本机路径，未收录）。`personalize/`：个人化微调。模型权重在 Hugging Face。`reports/`：评测报告。
+- `tests/`：自测（`tests/selftest.py` 无需 GPU）。`tools/`：数值核对、教师评测、各轮续训与评测脚本（`run_r3_*.ps1` 为第三轮领域语料；第四轮及之后的各步骤是 `r4_*.py`、`t_*.py`、`g_*.py`、`frost_eval.py`）。`personalize/`：个人化微调。模型权重在 Hugging Face。`reports/`：评测报告。
