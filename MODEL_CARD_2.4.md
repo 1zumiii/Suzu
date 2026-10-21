@@ -86,4 +86,4 @@ Suzu-2.4 补上了教师与 Suzu-2.1 之间首选差距的约一半。分领域�
 
 ## 复现
 
-训练与评测代码：[Suzu](https://github.com/1zumiii/Suzu)（简拼训练见 `tools/` 与 `reports/round5/abbrev_training.md`）；输入法集成：[suzu-ime](https://github.com/1zumiii/suzu-ime)；词库与配置：[rime-ice-Custom](https://github.com/1zumiii/rime-ice-Custom)。
+训练与评测代码：[Suzu](https://github.com/1zumiii/Suzu)（简拼训练见 `tools/t_abbrev_train.py` 与 `reports/round5/abbrev_training.md`）；输入法集成：[suzu-ime](https://github.com/1zumiii/suzu-ime)；词库与配置：[rime-ice-Custom](https://github.com/1zumiii/rime-ice-Custom)。

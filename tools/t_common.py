@@ -4,7 +4,8 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-DICT_DIR = Path(r"C:\Users\user\work\rime-ice\cn_dicts")
+import os
+DICT_DIR = Path(os.environ.get("CN_DICTS", "cn_dicts"))   # 词库目录（rime-suzu 的词库包安装后的 cn_dicts）
 CORPUS_FILES = [r"D:\distill-data-r2\train_sentences.txt", r"D:\distill-data-r3\big\chat.txt", r"D:\distill-data-r3\big\tech.txt",
                 r"D:\distill-data-r3\big\anime.txt", r"D:\distill-data-r4\slang\slang.txt"]
 CJK = re.compile(r"^[一-鿿]+$")

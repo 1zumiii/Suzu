@@ -16,8 +16,9 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "pipeline"))
-sys.path.insert(0, r"C:\Users\user\work\llama.cpp\gguf-py")
-STUDENT_CHECK = r"C:\Users\user\work\repo\cpp\build\student_check.exe"
+import os
+sys.path.insert(0, os.environ.get("GGUF_PY", "llama.cpp/gguf-py"))   # llama.cpp 的 gguf-py 目录
+STUDENT_CHECK = os.environ.get("STUDENT_CHECK", "student_check.exe")   # 核对用的可执行文件（本机构建的路径）
 
 
 def tname(n):

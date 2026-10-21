@@ -1,5 +1,5 @@
 """教师天花板（简拼）：用 4B-Base 与 9B-Base 教师按“上文加候选词”给整个候选池打分，与学生比较首选与前 5 名。只推理，不训练。
-候选池与学生分数来自云端原型（docs 的 ime/data/abbrev-proto/proto.py score）写出的缓存 json：
+候选池与学生分数来自原型脚本（proto.py score）写出的缓存 json：
 每题 {i, dom, key, ctx, ans, words（按词库权重降序）, w, s（学生分，同序）, first}。
 用法：
   python tools/t_abbrev.py items  --cache cache.json --data <目录>             写 <目录>/items.jsonl（id、ctx、c）
