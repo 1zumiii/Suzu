@@ -80,7 +80,7 @@ Suzu-2.1 在 Suzu-2 的权重上续训，结构、词表和文件大小不变，
 
 ## 使用模型
 
-模型为 GGUF（gpt2 架构），词表为单独的 `*.vocab.txt`（一行一个字符，行号即 token 编号：0 为填充，1 为未知，2 为句首）。打分方式：输入为句首符加上文最后至多 30 个字再加候选的字；候选得分为各字对数概率之和。Suzu 不使用 llama.cpp 的分词器，需要推理端自行做字符到编号的映射。`tools/student_check.cpp` 是核对数值的最小示例；完整的输入法集成（推理核心、Rime 的 Lua 过滤器、macOS、Windows 与 Android 三端接入、安卓守护进程）见 [suzu-ime](https://github.com/1zumiii/suzu-ime)，雾凇拼音的词库与配置见 [rime-ice-Custom](https://github.com/1zumiii/rime-ice-Custom)。
+模型为 GGUF（gpt2 架构），词表为单独的 `*.vocab.txt`（一行一个字符，行号即 token 编号：0 为填充，1 为未知，2 为句首）。打分方式：输入为句首符加上文最后至多 30 个字再加候选的字；候选得分为各字对数概率之和。Suzu 不使用 llama.cpp 的分词器，需要推理端自行做字符到编号的映射。`tools/student_check.cpp` 是核对数值的最小示例；完整的输入法集成（推理核心、Rime 的 Lua 过滤器、macOS、Windows 与 Android 三端接入、安卓守护进程）见 [suzu-ime](https://github.com/1zumiii/suzu-ime)，雾凇拼音的词库与配置见 [rime-suzu](https://github.com/1zumiii/rime-suzu)。
 
 ## 局限
 
