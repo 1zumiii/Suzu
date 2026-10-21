@@ -20,4 +20,3 @@ ft_ckpt.pt
 abandoned.json
 manifest.json
 !reports/*.json
-
