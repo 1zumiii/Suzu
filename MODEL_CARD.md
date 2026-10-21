@@ -28,4 +28,4 @@
 
 ## 复现
 
-训练与评测代码：[Suzu](https://github.com/1zumiii/Suzu)；输入法集成（推理核心与三端接入）：[suzu-ime](https://github.com/1zumiii/suzu-ime)；词库与配置：[rime-ice-Custom](https://github.com/1zumiii/rime-ice-Custom)。
+训练与评测代码：[Suzu](https://github.com/1zumiii/Suzu)；输入法集成（推理核心与三端接入）：[suzu-ime](https://github.com/1zumiii/suzu-ime)；配置与词库包：[rime-suzu](https://github.com/1zumiii/rime-suzu)。
