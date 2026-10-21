@@ -124,6 +124,9 @@ Suzu-2.1 在 Suzu-2 的权重上续训，结构、词表和文件大小不变，
 
 ## 运行 pipeline
 
+`tools/run_r*.ps1` 与 `reports/` 里的路径（`C:\Users\…\work`、`D:\distill-data-*`、`E:\Suzu-data`）是训练机上的数据与构建目录，属于复现记录。在别的机器上运行须改成本机路径；评测用的词库目录用环境变量 `CN_DICTS` 指定（rime-suzu 的词库包安装后的 `cn_dicts`）。
+
+
 下载内容需事先确认：
 
 - 维基百科中文第一分片约 590 MB。

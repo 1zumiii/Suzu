@@ -22,7 +22,8 @@ CKPTS = [("Suzu-2", "E:/Suzu-data/distill-data-r2/ckpt/student_best.pt"),
          ("Suzu-2.1", "E:/Suzu-data/distill-data-r3/run3/ckpt/student_best.pt"),
          ("Suzu-2.2", "E:/Suzu-data/distill-data-r4/runD/ckpt/student_last.pt")]
 LAMS = [0, 0.25, 0.5, 1, 2]
-DICT_DIR = Path(r"C:\Users\user\work\rime-ice\cn_dicts")
+import os
+DICT_DIR = Path(os.environ.get("CN_DICTS", "cn_dicts"))   # 词库目录：rime-suzu 的词库包安装到用户目录后的 cn_dicts（含 base.dict.yaml 等）
 
 
 def rj(p):
