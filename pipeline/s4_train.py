@@ -107,14 +107,28 @@ def run():
     w = [nat[0] / sum(nat), nat[1] / sum(nat)]
     log(f"学生训练：句子 {len(enc)}，蒸馏题 {len(kd_items)}（教师 {tname}），词表 {len(vocab)}，设备 {dev}")
 
-    model = Student(len(vocab), cfg["student_d"], cfg["student_layers"], cfg["student_heads"], cfg["student_ctx"]).to(dev)
+    ngram = None
+    if os.environ.get("DISTILL_NGRAM"):       # "2,3:18:128:2" = n values : log2 rows per n : table dim : hash heads (hashed n-gram embeddings)
+        a_ns, a_rows, a_dim, a_heads = os.environ["DISTILL_NGRAM"].split(":")
+        ngram = dict(ns=[int(x) for x in a_ns.split(",")], log_rows=int(a_rows), dim=int(a_dim), heads=int(a_heads))
+    model = Student(len(vocab), cfg["student_d"], cfg["student_layers"], cfg["student_heads"], cfg["student_ctx"], ngram).to(dev)
+    if ngram:
+        model.ngram.track = True
+        log(f"n-gram embeddings: {ngram}")
     nparams = sum(p.numel() for p in model.parameters())
     log(f"学生参数量 {nparams/1e6:.1f} M")
     if os.environ.get("DISTILL_INIT") and not (CKPT / "student_last.pt").exists():   # 试点：从已有学生（如 Suzu-2）的权重起步
-        model.load_state_dict(torch.load(os.environ["DISTILL_INIT"], map_location=dev)["model"])
+        model.load_state_dict(torch.load(os.environ["DISTILL_INIT"], map_location=dev)["model"], strict=ngram is None)
         log(f"从 {os.environ['DISTILL_INIT']} 初始化权重")
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg["student_lr"], betas=(0.9, 0.95), weight_decay=0.1,
-                            fused=(dev == "cuda"))
+    if ngram:       # the lookup tables see few updates per row: higher learning rate, no weight decay
+        tab = [p for n_, p in model.named_parameters() if n_.startswith("ngram.tables")]
+        rest = [p for n_, p in model.named_parameters() if not n_.startswith("ngram.tables")]
+        tab_lr = float(os.environ.get("DISTILL_NGRAM_LR", "1e-3"))
+        groups = [dict(params=rest, base_lr=cfg["student_lr"]), dict(params=tab, base_lr=tab_lr, weight_decay=0.0)]
+        log(f"n-gram table lr {tab_lr}")
+    else:
+        groups = [dict(params=list(model.parameters()), base_lr=cfg["student_lr"])]
+    opt = torch.optim.AdamW(groups, lr=cfg["student_lr"], betas=(0.9, 0.95), weight_decay=0.1, fused=(dev == "cuda"))
     steps = cfg["student_steps"]
     step = 0
     last = CKPT / "student_last.pt"
@@ -123,6 +137,9 @@ def run():
         model.load_state_dict(ck["model"])
         opt.load_state_dict(ck["opt"])
         step = ck["step"]
+        if ngram and "touched" in ck:
+            for i, t in enumerate(ck["touched"]):
+                getattr(model.ngram, f"touched{i}").copy_(t.to(dev))
         log(f"从第 {step} 步续跑")
     best_path = CKPT / "student_best.pt"
     best = C.read_json(CKPT / "best.json", {"nat": -1})
@@ -130,6 +147,9 @@ def run():
     def save(path, extra=None, with_opt=True):
         tmp = path.with_name(path.name + ".tmp")
         state = dict(model=model.state_dict(), step=step, cfg=cfg, vocab=vocab, **(extra or {}))
+        if ngram:
+            state["ngram"] = ngram
+            state["touched"] = [getattr(model.ngram, f"touched{i}").cpu() for i in range(len(ngram["ns"]))]
         if with_opt:                           # student_best.pt 只用于导出和打分，不存优化器状态
             state["opt"] = opt.state_dict()
         torch.save(state, tmp)
@@ -153,7 +173,7 @@ def run():
             raise
         rs = np.random.RandomState(step + seed * 1_000_003)
         for g in opt.param_groups:
-            g["lr"] = lr_at(step)
+            g["lr"] = lr_at(step) * g["base_lr"] / cfg["student_lr"]
         idx = rs.randint(0, len(enc), cfg["student_batch_lm"])
         ids = pad_batch([enc[i] for i in idx], dev)
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"):
@@ -183,7 +203,10 @@ def run():
             C.write_json(C.STATE / "train_last.json", dict(step=step, lm=lm.item(), kd=kd.detach().item(), ts=time.time()))
         if step % cfg["eval_every"] == 0 or step == steps:
             m = evaluate(model, vi, ev_items, w, dev)
-            log(f"[train] step {step} lm={lm.item():.3f} kd={kd.detach().item():.3f} 评测 自然加权 {m['nat']*100:.1f}% 难例 {m['hard']*100:.1f}%")
+            tch = ""
+            if ngram:
+                tch = " touched rows " + "/".join(f"{getattr(model.ngram, f'touched{i}').float().mean().item() * 100:.1f}%" for i in range(len(ngram["ns"])))
+            log(f"[train] step {step} lm={lm.item():.3f} kd={kd.detach().item():.3f} 评测 自然加权 {m['nat']*100:.1f}% 难例 {m['hard']*100:.1f}%{tch}")
             with open(C.LOGS / "train_metrics.jsonl", "a", encoding="utf-8") as f:
                 f.write(json.dumps(dict(step=step, lm=lm.item(), kd=kd.detach().item(), **m)) + "\n")
             if m["nat"] > best["nat"]:

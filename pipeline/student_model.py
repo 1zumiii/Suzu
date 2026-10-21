@@ -22,10 +22,76 @@ def _gelu_tanh(x):
     return F.gelu(x, approximate="tanh")
 
 
+# ---- hashed n-gram embeddings (optional) --------------------------------------------------------------------------------------
+# e_t = tok_emb[c_t] + pos_emb[t] + sum_n P_n( sum_h T_n[ hash_h(c_{t-n+1} .. c_t) mod rows_n ] )
+# The window holds the vocabulary indices of the n tokens that end at position t on the logical path of that token (PAD = 0 fills
+# the missing places, BOS counts as a token).  Hash (int64 arithmetic with wrap-around, same on CPU and GPU):
+#   h = FNV_OFFSET + head * GOLDEN;  for each token x in the window, oldest first:  h = (h ^ (x + 1)) * FNV_PRIME
+#   h = h ^ ((h >> 32) & 0xffffffff);  row = (h & INT64_MAX) mod rows
+FNV_OFFSET = 14695981039346656037 - 2 ** 64
+FNV_PRIME = 1099511628211
+GOLDEN = 0x9E3779B97F4A7C15 - 2 ** 64
+INT64_MAX = 2 ** 63 - 1
+
+
+def ngram_windows(ids, prev, n):
+    """ids [B,T], prev [B,T] (index of the logical predecessor of each token, -1 = none).  Returns [B,T,n] token indices, oldest first."""
+    B, T = ids.shape
+    cols, cur = [ids], prev
+    bidx = torch.arange(B, device=ids.device)[:, None].expand(B, T)
+    for _ in range(n - 1):
+        valid = cur >= 0
+        tok = torch.where(valid, ids[bidx, cur.clamp(min=0)], torch.zeros_like(ids))
+        cols.append(tok)
+        nxt = prev[bidx, cur.clamp(min=0)]
+        cur = torch.where(valid, nxt, torch.full_like(cur, -1))
+    return torch.stack(cols[::-1], -1)
+
+
+def ngram_hash(win, head, rows):
+    """win [...,n] int64 -> row indices [...] in [0, rows)."""
+    seed = (FNV_OFFSET + head * GOLDEN + 2 ** 63) % 2 ** 64 - 2 ** 63        # wrap to signed 64 bit
+    h = torch.full(win.shape[:-1], seed, dtype=torch.int64, device=win.device)
+    for j in range(win.shape[-1]):
+        h = (h ^ (win[..., j] + 1)) * FNV_PRIME
+    h = h ^ ((h >> 32) & 0xFFFFFFFF)
+    return (h & INT64_MAX) % rows
+
+
+class NgramEmbed(nn.Module):
+    def __init__(self, d, ns, log_rows, dim, heads):
+        super().__init__()
+        self.ns, self.rows, self.heads = list(ns), 2 ** log_rows, heads
+        self.tables = nn.ModuleList(nn.Embedding(self.rows, dim) for _ in self.ns)
+        self.proj = nn.ModuleList(nn.Linear(dim, d, bias=False) for _ in self.ns)
+        for t in self.tables:
+            nn.init.normal_(t.weight, std=0.02)
+        for p in self.proj:
+            nn.init.zeros_(p.weight)          # step 0 output equals the base model
+        self.track = False
+        for i in range(len(self.ns)):          # rows that were looked up at least once while tracking (not saved in the state dict)
+            self.register_buffer(f"touched{i}", torch.zeros(self.rows, dtype=torch.bool), persistent=False)
+
+    def forward(self, ids, prev):
+        out = 0
+        for i, n in enumerate(self.ns):
+            win = ngram_windows(ids, prev, n)
+            e = 0
+            for h in range(self.heads):
+                r = ngram_hash(win, h, self.rows)
+                if self.track:
+                    getattr(self, f"touched{i}")[r.reshape(-1)] = True
+                e = e + self.tables[i](r)
+            out = out + self.proj[i](e)
+        return out
+
+
 class Student(nn.Module):
-    def __init__(self, vocab, d, layers, heads, ctx):
+    def __init__(self, vocab, d, layers, heads, ctx, ngram=None):
         super().__init__()
         self.ctx = ctx
+        self.ngram_cfg = ngram
+        self.ngram = NgramEmbed(d, ngram["ns"], ngram["log_rows"], ngram["dim"], ngram["heads"]) if ngram else None
         self.emb = nn.Embedding(vocab, d, padding_idx=PAD)
         self.pos = nn.Embedding(ctx, d)
         layer = nn.TransformerEncoderLayer(d, heads, 4 * d, dropout=0.0, activation=_gelu_tanh,
@@ -37,13 +103,17 @@ class Student(nn.Module):
         with torch.no_grad():
             self.emb.weight[PAD].zero_()
 
-    def hidden(self, ids, pos=None, mask=None):
+    def hidden(self, ids, pos=None, mask=None, prev=None):
         """输出层之前的隐状态。mask 为 [B,T,T] 的布尔张量（True 表示不允许注意），pos 为 [B,T] 的位置编号；
         都不给时是普通的因果注意力。"""
         T = ids.shape[1]
         if pos is None:
             pos = torch.arange(T, device=ids.device)[None]
         x = self.emb(ids) + self.pos(pos)
+        if self.ngram is not None:
+            if prev is None:                   # plain sequence: the predecessor of a token is the one before it
+                prev = torch.arange(-1, T - 1, device=ids.device)[None].expand(ids.shape[0], T)
+            x = x + self.ngram(ids, prev)
         if mask is None:
             m = nn.Transformer.generate_square_subsequent_mask(T, device=ids.device)
             x = self.blocks(x, mask=m, is_causal=True)
@@ -127,17 +197,20 @@ def cand_scores_9(model, vocab_index, items, device):
     所以与逐候选单独算完全等价，但上文只算一次。输出层只在需要的位置上算。"""
     N = len(items)
     K = max(len(it["c"]) for it in items)
-    toks, poss, masks = [], [], []
+    toks, poss, masks, prevs = [], [], [], []
     g_r, g_c, g_t, g_o = [], [], [], []
     for n, it in enumerate(items):
         ctx = [BOS] + encode(vocab_index, it["ctx"])[-(model.ctx - 6):]
         lc = len(ctx)
         seq, pos, starts = list(ctx), list(range(lc)), []
+        prev = list(range(-1, lc - 1))
         for c in it["c"]:
             cs = encode(vocab_index, c)
             starts.append((len(seq), cs))
+            st0 = len(seq)
             seq += cs
             pos += [lc + j for j in range(len(cs))]
+            prev += [lc - 1 if j == 0 else st0 + j - 1 for j in range(len(cs))]   # first char follows the last context token
         T = len(seq)
         m = np.ones((T, T), dtype=bool)                       # True = 不允许注意
         m[:lc, :lc] = np.triu(np.ones((lc, lc), dtype=bool), 1)
@@ -153,16 +226,19 @@ def cand_scores_9(model, vocab_index, items, device):
         toks.append(seq)
         poss.append(pos)
         masks.append(m)
+        prevs.append(prev)
     Tm = max(len(x) for x in toks)
     ids = np.zeros((N, Tm), dtype=np.int64)
     pp = np.zeros((N, Tm), dtype=np.int64)
+    pv = np.full((N, Tm), -1, dtype=np.int64)
     mk = np.ones((N, Tm, Tm), dtype=bool)
     for n in range(N):
         T = len(toks[n])
         ids[n, :T], pp[n, :T], mk[n, :T, :T] = toks[n], poss[n], masks[n]
+        pv[n, :T] = prevs[n]
         mk[n, T:, 0] = False                                  # 补齐行至少能看第 0 个位置，避免全屏蔽产生 NaN
     H = model.hidden(torch.from_numpy(ids).to(device), pos=torch.from_numpy(pp).to(device),
-                     mask=torch.from_numpy(mk).to(device))
+                     mask=torch.from_numpy(mk).to(device), prev=torch.from_numpy(pv).to(device))
     r = torch.tensor(g_r, device=device)
     c = torch.tensor(g_c, device=device)
     logits = H[r, c] @ model.emb.weight.T
@@ -190,6 +266,6 @@ def score_items(model, vocab, items, device):
 def load_student(path, device):
     ck = torch.load(path, map_location=device)
     c = ck["cfg"]
-    model = Student(len(ck["vocab"]), c["student_d"], c["student_layers"], c["student_heads"], c["student_ctx"]).to(device)
+    model = Student(len(ck["vocab"]), c["student_d"], c["student_layers"], c["student_heads"], c["student_ctx"], ck.get("ngram")).to(device)
     model.load_state_dict(ck["model"])
     return model.eval(), ck["vocab"]
