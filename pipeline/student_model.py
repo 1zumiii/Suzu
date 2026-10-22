@@ -195,12 +195,34 @@ def cand_scores_9(model, vocab_index, items, device):
     """第 9 项（含第 8 项）：同一题的所有候选共享上下文。每题只有一条序列：[BOS] + 上文 + 各候选依次拼接，
     用自定义注意力掩码让每个候选只看见上文和自己前面的字，位置编号从上文之后各自重新开始，
     所以与逐候选单独算完全等价，但上文只算一次。输出层只在需要的位置上算。"""
+    return cand_scores_run(model, cand_batch(model.ctx, vocab_index, items), device)
+
+
+def pack_rows(lens, cap):
+    """把长度为 lens 的序列装进容量 cap 的行（先放长的，放进第一个装得下的行）。返回每条序列的 (行号, 行内起点) 与行数。"""
+    order = sorted(range(len(lens)), key=lambda i: -lens[i])
+    fill, place = [], [None] * len(lens)
+    for i in order:
+        for r, f in enumerate(fill):
+            if f + lens[i] <= cap:
+                place[i] = (r, f)
+                fill[r] += lens[i]
+                break
+        else:
+            place[i] = (len(fill), 0)
+            fill.append(lens[i])
+    return place, len(fill)
+
+
+def cand_batch(model_ctx, vocab_index, items, pack=0):
+    """cand_scores_9 的 CPU 部分：拼好序列、位置、掩码与取分下标（numpy），不碰模型与显卡，可以在后台线程里提前做。
+    pack > 0：把几道题拼进同一行（行容量取 pack 与最长一题中的较大者），各题的掩码互不相通，数学上与每题一行相同，只是少算补齐的位置。"""
     N = len(items)
     K = max(len(it["c"]) for it in items)
     toks, poss, masks, prevs = [], [], [], []
     g_r, g_c, g_t, g_o = [], [], [], []
     for n, it in enumerate(items):
-        ctx = [BOS] + encode(vocab_index, it["ctx"])[-(model.ctx - 6):]
+        ctx = [BOS] + encode(vocab_index, it["ctx"])[-(model_ctx - 6):]
         lc = len(ctx)
         seq, pos, starts = list(ctx), list(range(lc)), []
         prev = list(range(-1, lc - 1))
@@ -227,25 +249,66 @@ def cand_scores_9(model, vocab_index, items, device):
         poss.append(pos)
         masks.append(m)
         prevs.append(prev)
-    Tm = max(len(x) for x in toks)
-    ids = np.zeros((N, Tm), dtype=np.int64)
-    pp = np.zeros((N, Tm), dtype=np.int64)
-    pv = np.full((N, Tm), -1, dtype=np.int64)
-    mk = np.ones((N, Tm, Tm), dtype=bool)
+    lens = [len(x) for x in toks]
+    if pack:
+        Tm = max(pack, max(lens))
+        place, R = pack_rows(lens, Tm)
+    else:
+        Tm, place, R = max(lens), [(n, 0) for n in range(N)], N
+    ids = np.zeros((R, Tm), dtype=np.int64)
+    pp = np.zeros((R, Tm), dtype=np.int64)
+    pv = np.full((R, Tm), -1, dtype=np.int64)
+    mk = np.ones((R, Tm, Tm), dtype=bool)
+    used = np.zeros((R, Tm), dtype=bool)
     for n in range(N):
-        T = len(toks[n])
-        ids[n, :T], pp[n, :T], mk[n, :T, :T] = toks[n], poss[n], masks[n]
-        pv[n, :T] = prevs[n]
-        mk[n, T:, 0] = False                                  # 补齐行至少能看第 0 个位置，避免全屏蔽产生 NaN
-    H = model.hidden(torch.from_numpy(ids).to(device), pos=torch.from_numpy(pp).to(device),
-                     mask=torch.from_numpy(mk).to(device), prev=torch.from_numpy(pv).to(device))
-    r = torch.tensor(g_r, device=device)
-    c = torch.tensor(g_c, device=device)
-    logits = H[r, c] @ model.emb.weight.T
-    lp = F.log_softmax(logits.float(), -1).gather(-1, torch.tensor(g_t, device=device)[:, None]).squeeze(-1)
-    tot = torch.zeros(N * K, device=device, dtype=lp.dtype).index_add(0, torch.tensor(g_o, device=device), lp)
-    ns = torch.tensor([n for n, it in enumerate(items) for _ in it["c"]], device=device)
-    ks = torch.tensor([k for it in items for k in range(len(it["c"]))], device=device)
+        T = lens[n]
+        row, a = place[n]
+        ids[row, a:a + T], pp[row, a:a + T], mk[row, a:a + T, a:a + T] = toks[n], poss[n], masks[n]
+        pv[row, a:a + T] = [p + a if p >= 0 else -1 for p in prevs[n]]
+        used[row, a:a + T] = True
+    for row in range(R):
+        mk[row, ~used[row], 0] = False                        # 补齐位置至少能看第 0 个位置，避免全屏蔽产生 NaN（真实位置不看补齐位置）
+    pl = np.array(place, dtype=np.int64)
+    gr = np.array(g_r, dtype=np.int64)
+    ns = np.array([n for n, it in enumerate(items) for _ in it["c"]], dtype=np.int64)
+    ks = np.array([k for it in items for k in range(len(it["c"]))], dtype=np.int64)
+    return dict(N=N, K=K, ids=ids, pp=pp, mk=mk, pv=pv, r=pl[gr, 0], c=pl[gr, 1] + np.array(g_c, dtype=np.int64),
+                t=np.array(g_t, dtype=np.int64), o=np.array(g_o, dtype=np.int64), ns=ns, ks=ks)
+
+
+def lm_batch_packed(seqs, cap):
+    """语言模型损失的拼行版：几条句子拼进同一行，块对角的因果掩码、位置编号每句从 0 开始。
+    返回 ids、pos、mask 与预测位置（行、列）和目标字，每句第 j 个位置预测第 j+1 个字，与“每句一行、补齐、忽略 PAD”的损失完全相同。"""
+    lens = [len(s) for s in seqs]
+    Tm = max(cap, max(lens))
+    place, R = pack_rows(lens, Tm)
+    ids = np.zeros((R, Tm), dtype=np.int64)
+    pp = np.zeros((R, Tm), dtype=np.int64)
+    mk = np.ones((R, Tm, Tm), dtype=bool)
+    used = np.zeros((R, Tm), dtype=bool)
+    rr, cc, tt = [], [], []
+    for s, (row, a), T in zip(seqs, place, lens):
+        ids[row, a:a + T] = s
+        pp[row, a:a + T] = np.arange(T)
+        mk[row, a:a + T, a:a + T] = np.triu(np.ones((T, T), dtype=bool), 1)
+        used[row, a:a + T] = True
+        rr += [row] * (T - 1)
+        cc += list(range(a, a + T - 1))
+        tt += list(s[1:])
+    for row in range(R):
+        mk[row, ~used[row], 0] = False
+    return dict(ids=ids, pp=pp, mk=mk, r=np.array(rr, dtype=np.int64), c=np.array(cc, dtype=np.int64), t=np.array(tt, dtype=np.int64))
+
+
+def cand_scores_run(model, b, device):
+    """cand_scores_9 的显卡部分：输入 cand_batch 的结果，返回 [N, K] 的候选分数（不足 K 的位置填 -1e4），可反传。"""
+    N, K = b["N"], b["K"]
+    g = {k: torch.from_numpy(b[k]).to(device, non_blocking=True) for k in ("ids", "pp", "mk", "pv", "r", "c", "t", "o", "ns", "ks")}
+    H = model.hidden(g["ids"], pos=g["pp"], mask=g["mk"], prev=g["pv"])
+    logits = H[g["r"], g["c"]] @ model.emb.weight.T
+    lp = F.log_softmax(logits.float(), -1).gather(-1, g["t"][:, None]).squeeze(-1)
+    tot = torch.zeros(N * K, device=device, dtype=lp.dtype).index_add(0, g["o"], lp)
+    ns, ks = g["ns"], g["ks"]
     return torch.full((N, K), -1e4, device=device).index_put((ns, ks), tot[ns * K + ks])
 
 

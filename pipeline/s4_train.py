@@ -13,7 +13,8 @@ import torch.nn.functional as F
 
 import common as C
 from common import CFG, CKPT, DATA, SCORES, log
-from student_model import BOS, PAD, Student, build_vocab, cand_scores, encode, pad_batch
+from student_model import (BOS, PAD, Student, build_vocab, cand_batch, cand_scores, cand_scores_run, encode, lm_batch_packed,
+                           pad_batch)
 
 
 class EncStore:
@@ -170,6 +171,11 @@ def run():
         fl = float(os.environ.get("DISTILL_LR_FLOOR", "0.1"))
         return cfg["student_lr"] * (fl + (1 - fl) * 0.5 * (1 + math.cos(math.pi * (s - warm) / max(steps - warm, 1))))
 
+    pack = int(os.environ.get("DISTILL_PACK", "0"))   # >0：短序列拼进同一行（行容量），不算补齐位置；数学上与补齐版相同
+    if pack and ngram:
+        raise SystemExit("DISTILL_PACK does not support n-gram embeddings")
+    if pack:
+        log(f"拼行训练：行容量 {pack}")
     model.train()
     prog = C.Progress("train", steps, step)
     while step < steps:
@@ -183,14 +189,21 @@ def run():
         for g in opt.param_groups:
             g["lr"] = lr_at(step) * g["base_lr"] / cfg["student_lr"]
         idx = rs.randint(0, len(enc), cfg["student_batch_lm"])
-        ids = pad_batch([enc[i] for i in idx], dev)
+        if pack:
+            pb = {k: torch.from_numpy(v).to(dev) for k, v in lm_batch_packed([enc[i] for i in idx], pack).items()}
+        else:
+            ids = pad_batch([enc[i] for i in idx], dev)
         with torch.autocast(dev, dtype=torch.bfloat16, enabled=dev == "cuda"):
-            lg = model(ids[:, :-1])
-            lm = F.cross_entropy(lg.float().reshape(-1, lg.shape[-1]), ids[:, 1:].reshape(-1), ignore_index=PAD)
+            if pack:            # 拼行：只在真实位置上算输出层与损失，与补齐版的损失相同
+                H = model.hidden(pb["ids"], pos=pb["pp"], mask=pb["mk"])
+                lm = F.cross_entropy((H[pb["r"], pb["c"]] @ model.emb.weight.T).float(), pb["t"])
+            else:
+                lg = model(ids[:, :-1])
+                lm = F.cross_entropy(lg.float().reshape(-1, lg.shape[-1]), ids[:, 1:].reshape(-1), ignore_index=PAD)
             kd = torch.zeros((), device=dev)
             if kd_items:
                 part = [kd_items[i] for i in rs.randint(0, len(kd_items), cfg["student_batch_kd"])]
-                sc = cand_scores(model, vi, part, dev)
+                sc = cand_scores_run(model, cand_batch(model.ctx, vi, part, pack), dev) if pack else cand_scores(model, vi, part, dev)
                 K = sc.shape[1]
                 tgt_np = np.full((len(part), K), -1e4, dtype=np.float32)
                 for n, it in enumerate(part):
