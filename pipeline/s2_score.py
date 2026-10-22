@@ -151,6 +151,31 @@ class HFScorer:
             ids[i, :len(s)] = torch.tensor(s)
             att[i, :len(s)] = 1
         ids, att = ids.to(dev), att.to(dev)
+        body, head = getattr(self.model, "model", None), getattr(self.model, "lm_head", None)
+        if body is not None and head is not None and os.environ.get("DISTILL_TEACHER_FULL_LOGITS") != "1":
+            # 只在计分位置上算输出层：与整句 logits 的口径相同（同一隐状态、同一输出层），但不再为上文位置生成整个词表的 logits，
+            # 长上文时显存从数 GB 降到几十 MB，避免 Windows 把显存溢出到系统内存而变慢
+            hid = body(input_ids=ids, attention_mask=att).last_hidden_state
+            lens = att.sum(1).tolist()
+            rows, cols, tgts, owner = [], [], [], []
+            for i, (s, lc) in enumerate(zip(seqs, lcps)):
+                for j in range(lc + 1, lens[i]):        # 第 j 个 token 由第 j-1 个位置预测，与下面整句版的掩码 j >= lcp+1 相同
+                    rows.append(i)
+                    cols.append(j - 1)
+                    tgts.append(s[j])
+                    owner.append(i)
+            flat = torch.zeros(len(seqs), device=dev, dtype=torch.float32)
+            if rows:
+                r = torch.tensor(rows, device=dev)
+                c = torch.tensor(cols, device=dev)
+                lp = head(hid[r, c]).float().log_softmax(-1).gather(-1, torch.tensor(tgts, device=dev)[:, None]).squeeze(-1)
+                flat = flat.index_add(0, torch.tensor(owner, device=dev), lp)
+            flat = flat.tolist()
+            out, pos = [], 0
+            for it in items:
+                out.append(flat[pos:pos + len(it["c"])])
+                pos += len(it["c"])
+            return out
         logits = self.model(input_ids=ids, attention_mask=att).logits
         lens = att.sum(1)
         flat = []
