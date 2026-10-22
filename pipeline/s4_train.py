@@ -101,11 +101,16 @@ def run():
                 it["c"] = [it["c"][i] for i in idx]
                 it["f"] = [it["f"][i] for i in idx]
                 it["t"] = idx.index(it["t"])
+    short_kd = float(os.environ.get("DISTILL_SHORT_CTX_KD", "1"))   # 上文不足 4 个汉字的题，蒸馏损失（老师软标签）乘这个系数
+    for it in kd_items:
+        it["kw"] = short_kd if sum(1 for ch in it["ctx"] if "一" <= ch <= "鿿") < 4 else 1.0
     ev_items = C.read_jsonl(DATA / "items_dev.jsonl")   # 开发集：只用于挑检查点，不参与最终评测
     meta = C.read_json(DATA / "meta.json")
     nat = meta["eval_natural"]
     w = [nat[0] / sum(nat), nat[1] / sum(nat)]
     log(f"学生训练：句子 {len(enc)}，蒸馏题 {len(kd_items)}（教师 {tname}），词表 {len(vocab)}，设备 {dev}")
+    if short_kd != 1:
+        log(f"短上文题（不足 4 个汉字）{sum(1 for it in kd_items if it['kw'] != 1)} 道，蒸馏损失乘 {short_kd}")
 
     ngram = None
     if os.environ.get("DISTILL_NGRAM"):       # "2,3:18:128:2" = n values : log2 rows per n : table dim : hash heads (hashed n-gram embeddings)
@@ -115,6 +120,9 @@ def run():
     if ngram:
         model.ngram.track = True
         log(f"n-gram embeddings: {ngram}")
+    if os.environ.get("DISTILL_COMPILE") == "1":   # 只编译 Transformer 层的 forward：参数名不变，检查点照常读写
+        model.blocks.forward = torch.compile(model.blocks.forward, dynamic=True)
+        log("torch.compile: Transformer 层（dynamic=True）")
     nparams = sum(p.numel() for p in model.parameters())
     log(f"学生参数量 {nparams/1e6:.1f} M")
     if os.environ.get("DISTILL_INIT") and not (CKPT / "student_last.pt").exists():   # 试点：从已有学生（如 Suzu-2）的权重起步
@@ -191,7 +199,8 @@ def run():
                 pt = F.softmax(tgt / cfg["kd_temp"], -1)
                 kdv = F.kl_div(F.log_softmax(sc / cfg["kd_temp"], -1), pt, reduction="none").sum(-1)
                 wv = torch.tensor([1.0 + cfg.get("kd_hard_weight", 0.0) * it["s"] for it in part], device=dev)   # 难例加权
-                kd = (kdv * wv).sum() / wv.sum()
+                kv = torch.tensor([it["kw"] for it in part], device=dev)
+                kd = (kdv * wv * kv).sum() / wv.sum()       # 分母不含 kv：短上文题的贡献确实变小，而不是被重新归一化抵消
             loss = lm + cfg["kd_weight"] * kd
         opt.zero_grad(set_to_none=True)
         loss.backward()

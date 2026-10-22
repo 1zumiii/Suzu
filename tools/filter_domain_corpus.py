@@ -38,6 +38,8 @@ def main():
     ap.add_argument("--leak-ratio", type=float, default=0.5, help="与测试句共享的 4 字片段占比达到此值则丢弃")
     ap.add_argument("--ppl", help="r3_ppl.py 产出的 'nll<TAB>句子' 文件；与 --ppl-drop 一起使用")
     ap.add_argument("--ppl-drop", type=float, default=0.0, help="丢掉每字平均负对数似然最高的这一比例")
+    ap.add_argument("--min-han", type=int, default=8, help="汉字数下限（整段模式用 30）")
+    ap.add_argument("--max-han", type=int, default=30, help="汉字数上限（整段模式用 160）")
     a = ap.parse_args()
     ppl_cut = None
     ppl = {}
@@ -61,7 +63,7 @@ def main():
         t = clean(json.loads(r)["t"], cc)
         stat["total"] += 1
         n = han_len(t)
-        if not 8 <= n <= 30 or n < 0.7 * len(t):
+        if not a.min_han <= n <= a.max_han or n < 0.7 * len(t):
             stat["short_long"] += 1
             continue
         if not ALLOWED.match(t) or any(b in t for b in BAD) or re.search(r"(.)\1{3,}", t) or len(re.findall(r"[A-Za-z]", t)) > 12:
