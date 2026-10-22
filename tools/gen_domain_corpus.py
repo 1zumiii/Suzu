@@ -2,7 +2,8 @@
 每次请求给一个“话题/场景种子 + 语气”，让模型写 10 句；多次采样，温度 1.0。原始输出逐批追加到 <out>/raw_<domain>.jsonl（可断点续跑），
 过滤与去重在 tools/filter_domain_corpus.py。提示词模板与生成参数见 DATA.md。
 二次元领域只要求短的作品名、角色名、术语和日常讨论口吻，不引用作品原文、台词或歌词；不涉及任何真实个人数据。
-用法：python tools/gen_domain_corpus.py --out <目录> --domain chat --target 5000 [--model Qwen/Qwen3.5-9B]"""
+--para：每次请求改写一段 3 到 6 句的连贯文字（长上文训练题的来源），整段记一行。
+用法：python tools/gen_domain_corpus.py --out <目录> --domain chat --target 5000 [--model Qwen/Qwen3.5-9B] [--para]"""
 import argparse
 import json
 import os
@@ -41,6 +42,10 @@ TEMPLATE = ("请写 10 句简体中文，场景是{desc}，话题：{topic}，�
             "要求：每句 8 到 30 个字，口吻自然，像真人随手打出来的；每句内容各不相同，句式多样；"
             "不要编号，不要引号，不要解释，每行一句；不要出现真实的人名、电话、地址等个人信息；"
             "{extra}")
+PARA_TEMPLATE = ("请写一段简体中文，3 到 6 句，场景是{desc}，话题：{topic}，语气：{tone}。\n"
+                 "要求：几句话前后连贯，像同一个人在聊天或发帖时一口气打出来的一段话，总长 40 到 150 个字；用正常的中文标点；"
+                 "只输出这一段，不要标题、编号、引号和解释；不要出现真实的人名、电话、地址等个人信息；"
+                 "{extra}")
 EXTRA = {
     "chat": "多用常见的日常词语。",
     "tech": "可以出现常见的技术术语（中英文混用时英文单词不超过一个）。",
@@ -61,6 +66,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--quant", default="nf4")
     ap.add_argument("--scenes", help="gen_scenes.py 产出的 jsonl（topic、scene），给了就从中抽种子")
+    ap.add_argument("--para", action="store_true", help="每次请求写一段 3 到 6 句的连贯文字，整段记为一行（长上文训练题用）；--target 按段数计")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -99,7 +105,7 @@ def main():
             for _ in range(a.batch):
                 topic, tone = rng.choice(TOPICS[a.domain]), rng.choice(TONES[a.domain])
                 scene = rng.choice(scenes[topic]) if scenes.get(topic) else "任意"
-                p = TEMPLATE.format(desc=DOMAIN_DESC[a.domain], topic=topic, scene=scene, tone=tone, extra=EXTRA[a.domain])
+                p = (PARA_TEMPLATE if a.para else TEMPLATE).format(desc=DOMAIN_DESC[a.domain], topic=topic, scene=scene, tone=tone, extra=EXTRA[a.domain])
                 msgs = [{"role": "user", "content": p}]
                 try:
                     s = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
@@ -113,6 +119,12 @@ def main():
                                    pad_token_id=tok.pad_token_id)
             texts = tok.batch_decode(g[:, enc["input_ids"].shape[1]:], skip_special_tokens=True)
             for (topic, tone), t in zip(metas, texts):
+                if a.para:
+                    t = "".join(x.strip() for x in t.splitlines())
+                    if t:
+                        f.write(json.dumps({"d": a.domain, "topic": topic, "tone": tone, "t": t}, ensure_ascii=False) + "\n")
+                        n_lines += 1
+                    continue
                 for line in t.splitlines():
                     line = line.strip()
                     if line:
