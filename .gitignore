@@ -19,4 +19,5 @@ student_personal*
 ft_ckpt.pt
 abandoned.json
 manifest.json
-!reports/*.json
+# 评测报告与训练过程记录不入库
+reports/
