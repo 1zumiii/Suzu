@@ -8,3 +8,5 @@ jieba
 pypinyin
 opencc-python-reimplemented
 numpy
+# 导出 GGUF（pipeline/export_gguf.py）用；也可以不装，改用环境变量 GGUF_PY 指向 llama.cpp 源码里的 gguf-py
+gguf
