@@ -11,7 +11,7 @@
 
 流程：丢弃 revise 条目 → hard 条目构造成对样本（所选词为正例，最终首位与原首位为反例），anchor 条目作不变样本
 （打分保持与基础模型一致）→ 从基础学生模型出发，用成对排序损失加语言模型与 KL 正则微调（断点续跑）
-→ 留出 10% 个人样本验证首位命中率必须高于基础模型，同时公开评测集准确率下降不超过 1 个百分点，
+→ 按时间留出最新 10% 的个人样本，首位命中率必须高于基础模型，同时公开评测集准确率下降不超过 1 个百分点，
 否则放弃（不导出）→ 通过则导出 Q8_0 的 GGUF 与词表。
 
 用法：
@@ -37,6 +37,7 @@ REPO = HERE.parent
 sys.path.insert(0, str(REPO / "pipeline"))
 sys.path.insert(0, str(HERE))
 import student_model as S  # noqa: E402
+import holdout as H  # noqa: E402
 
 PUBLIC_DROP_LIMIT = 0.01   # 公开评测集准确率最多允许下降 1 个百分点
 
@@ -82,7 +83,9 @@ def parse_corpus(path):
                 if len(cols) < 8 or cols[7] not in ("hard", "anchor") or not cols[3] or not cols[4]:
                     stats["malformed"] += 1
                     continue
-                recs[cols[0]] = dict(id=cols[0], ctx=cols[3], chosen=cols[4], final=cols[5], orig=cols[6], typ=cols[7])
+                ts = int(cols[1]) if cols[1].isdigit() else 0
+                recs[cols[0]] = dict(id=cols[0], ts=ts, ctx=cols[3], chosen=cols[4], final=cols[5], orig=cols[6],
+                                     typ=cols[7])
     kept = [r for i, r in recs.items() if i not in revoked]
     stats["revoked_entries"] = len(recs) - len(kept)
     return kept, stats
@@ -90,10 +93,6 @@ def parse_corpus(path):
 
 def negatives(r):
     return [x for x in dict.fromkeys([r["final"], r["orig"]]) if x and x != r["chosen"]]
-
-
-def is_holdout(r):
-    return int(hashlib.md5(r["id"].encode("utf-8")).hexdigest()[:8], 16) % 10 == 0
 
 
 # ---------------------------------------------------------------- 评估
@@ -232,6 +231,10 @@ def parse_args(argv):
     ap.add_argument("--ckpt-every", type=int, default=50, dest="ckpt_every")
     ap.add_argument("--public-limit", type=int, default=3000, dest="public_limit")
     ap.add_argument("--min-holdout", type=int, default=5, dest="min_holdout")
+    ap.add_argument("--split", choices=("time", "hash"), default="time",
+                    help="留出集划分：time 留出最新的一段时间（默认），hash 按 id 随机抽取")
+    ap.add_argument("--holdout-frac", type=float, default=0.1, dest="holdout_frac",
+                    help="留出的 hard 条目比例（默认 0.1）")
     ap.add_argument("--device", default="auto")
     return ap.parse_args(argv)
 
@@ -246,13 +249,14 @@ def run(argv=None):
     torch.manual_seed(0)
 
     recs, stats = parse_corpus(args.corpus)
-    hard_all = [r for r in recs if r["typ"] == "hard" and negatives(r)]
-    anc_all = [r for r in recs if r["typ"] == "anchor"]
-    hard_tr = [r for r in hard_all if not is_holdout(r)]
-    hard_ho = [r for r in hard_all if is_holdout(r)]
-    anc_tr = [r for r in anc_all if not is_holdout(r)]
+    usable = [r for r in recs if r["typ"] == "anchor" or negatives(r)]
+    tr, ho, cut = H.split(usable, args.split, args.holdout_frac)
+    hard_tr = [r for r in tr if r["typ"] == "hard"]
+    hard_ho = [r for r in ho if r["typ"] == "hard"]
+    anc_tr = [r for r in tr if r["typ"] == "anchor"]
+    split_desc = f"按时间，截止 {H.to_unix(cut)}（Unix 秒）" if cut is not None else "按 id 哈希"
     print(f"语料：{stats['rows']} 行，revise 丢弃 {stats['revoked_entries']} 条，格式异常 {stats['malformed']} 行；"
-          f"hard 训练 {len(hard_tr)}、留出 {len(hard_ho)}，anchor 训练 {len(anc_tr)}")
+          f"留出{split_desc}；hard 训练 {len(hard_tr)}、留出 {len(hard_ho)}，anchor 训练 {len(anc_tr)}")
     if len(hard_ho) < args.min_holdout or not hard_tr:
         refuse(f"hard 样本太少（留出 {len(hard_ho)} 条，至少需要 {args.min_holdout} 条），先多积累一些再微调。", 3)
 
@@ -270,6 +274,8 @@ def run(argv=None):
     tuned_pub = public_acc(model, vi, pub, dev)
     result = dict(time=time.strftime("%Y-%m-%d %H:%M:%S"), steps=steps, hard_train=len(hard_tr), hard_holdout=n_ho,
                   anchor_train=len(anc_tr), revise_dropped=stats["revoked_entries"],
+                  split="time" if cut is not None else "hash",
+                  holdout_from_unix=H.to_unix(cut) if cut is not None else None,
                   holdout_top1_base=round(base_hit, 4), holdout_top1_tuned=round(tuned_hit, 4),
                   public_acc_base=round(base_pub, 4), public_acc_tuned=round(tuned_pub, 4), public_items=len(pub))
     ok_personal = tuned_hit > base_hit

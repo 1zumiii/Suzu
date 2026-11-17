@@ -59,15 +59,16 @@ def build_base(dst):
 def build_corpus(d):
     rows, hard_ids = [], []
     n = 0
+    when = rng.permutation(1000)             # 时间戳打乱：hard 与 anchor 在时间上交错，按时间留出时两类都有
     for k in range(5):                       # 个人偏好：这些上文后用户选 B，而模型首位是 A
         for _ in range(24):
             n += 1
-            rows.append(f"{n}\t{29000000 + n}\t4\t{CTX[k]}\t{WORDS[k][1]}\t{WORDS[k][0]}\t{WORDS[k][0]}\thard\t12\tq")
+            rows.append(f"{n}\t{29000000 + when[n]}\t4\t{CTX[k]}\t{WORDS[k][1]}\t{WORDS[k][0]}\t{WORDS[k][0]}\thard\t12\tq")
             hard_ids.append(str(n))
     for k in range(5, N_CTX):                # 锚点：选了首位 A
         for _ in range(8):
             n += 1
-            rows.append(f"{n}\t{29000000 + n}\t4\t{CTX[k]}\t{WORDS[k][0]}\t{WORDS[k][0]}\t{WORDS[k][0]}\tanchor\t9\tq")
+            rows.append(f"{n}\t{29000000 + when[n]}\t4\t{CTX[k]}\t{WORDS[k][0]}\t{WORDS[k][0]}\t{WORDS[k][0]}\tanchor\t9\tq")
     for i in hard_ids[:10]:                  # 10 条 revise：对应条目必须被丢弃
         rows.append(f"{i}\t29000999\t4\t{CTX[0]}\t{WORDS[0][1]}\t{WORDS[0][0]}\t{WORDS[0][0]}\trevise\t2\tq")
     rows += ["garbage line without tabs", "x\t1\t2"]
@@ -126,6 +127,7 @@ def main():
     assert rc == 0, "应当通过验收"
     man = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
     assert man["holdout_top1_tuned"] > man["holdout_top1_base"], man
+    assert man["split"] == "time" and man["holdout_from_unix"] > 0, man
     assert man["public_acc_base"] - man["public_acc_tuned"] <= 0.01 + 1e-9, man
     g = out / "student_personal.q8_0.gguf"
     assert g.exists() and g.stat().st_size > 10_000 and (out / "student_personal.q8_0.gguf.vocab.txt").exists()

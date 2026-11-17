@@ -25,3 +25,5 @@ jobs:
       # 自测用玩具语料、桩模块与 dummy 打分，只依赖标准库
       - name: tests/selftest.py
         run: python tests/selftest.py "$RUNNER_TEMP/selftest"
+      - name: personalize/tests/test_holdout.py
+        run: python personalize/tests/test_holdout.py
